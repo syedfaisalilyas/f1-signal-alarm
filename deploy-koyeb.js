@@ -1,6 +1,8 @@
 #!/usr/bin/env node
 // Deploys this app to Koyeb's free instance via the REST API.
-//   KOYEB_TOKEN=xxx node deploy-koyeb.js      (or: node deploy-koyeb.js <token>)
+//   node deploy-koyeb.js <koyeb-token>        (--dry-run to preview)
+// Reads .env so your Telegram / ntfy / forex credentials travel with the deploy.
+import './src/env.js';
 import crypto from 'crypto';
 
 const API = 'https://app.koyeb.com/v1';
@@ -9,13 +11,15 @@ const ok  = s => console.log(`  ${c.g}✓${c.x} ${s}`);
 const bad = s => console.log(`  ${c.r}✗${c.x} ${s}`);
 const dim = s => console.log(`  ${c.d}${s}${c.x}`);
 
-const TOKEN = process.argv[2] || process.env.KOYEB_TOKEN;
+const args = process.argv.slice(2);
+const DRY = args.includes('--dry-run');
+const TOKEN = args.find(a => !a.startsWith('--')) || process.env.KOYEB_TOKEN;
 const IMAGE = process.env.IMAGE || 'ghcr.io/syedfaisalilyas/f1-signal-alarm:latest';
 const APP   = process.env.APP_NAME || 'f1-alarm';
 // Binance geo-blocks US IPs (HTTP 451) — keep this OUT of dal/rdu/mci/dsm.
 const REGION = process.env.REGION || 'fra';
 
-if (!TOKEN) {
+if (!TOKEN && !DRY) {
   console.log(`
   ${c.b}Koyeb deploy${c.x}
 
@@ -41,6 +45,32 @@ async function kb(method, path, body) {
 
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 
+// Build the env list first so --dry-run can show it without any network call.
+const APP_PASSWORD = process.env.KOYEB_APP_PASSWORD || crypto.randomBytes(9).toString('base64url');
+const env = [{ key: 'APP_PASSWORD', value: APP_PASSWORD }, { key: 'PORT', value: '8787' }];
+for (const k of ['TELEGRAM_TOKEN', 'TELEGRAM_CHAT_ID', 'NTFY_TOPIC', 'NTFY_SERVER', 'TWELVEDATA_KEY', 'VAPID_PUBLIC', 'VAPID_PRIVATE', 'VAPID_SUBJECT']) {
+  if (process.env[k]) env.push({ key: k, value: process.env[k] });
+}
+const mask = v => v.length > 10 ? v.slice(0, 6) + '…' + v.slice(-3) : '…';
+
+if (DRY) {
+  console.log(`
+  ${c.b}Dry run — nothing deployed${c.x}
+
+  image   ${IMAGE}
+  app     ${APP}
+  region  ${REGION}   ${c.d}(Binance returns 451 to US regions)${c.x}
+  size    free (1 vCPU / 512MB)
+
+  environment variables that would be set:`);
+  for (const e of env) console.log(`    ${e.key.padEnd(18)} ${e.key.includes('PASSWORD') || e.key.includes('TOKEN') || e.key.includes('PRIVATE') ? mask(e.value) : e.value}`);
+  const missing = ['TELEGRAM_TOKEN', 'TELEGRAM_CHAT_ID'].filter(k => !process.env[k]);
+  console.log(missing.length
+    ? `\n  ${c.r}✗ missing: ${missing.join(', ')} — phone alerts would NOT work${c.x}\n`
+    : `\n  ${c.g}✓ Telegram credentials present — alerts will work${c.x}\n`);
+  process.exit(0);
+}
+
 // 1. validate token
 const me = await kb('GET', '/account/profile');
 if (!me.ok) { bad(`Token rejected (${me.status}): ${JSON.stringify(me.json).slice(0, 200)}`); process.exit(1); }
@@ -56,13 +86,6 @@ else {
   if (!created.ok) { bad(`Create app failed (${created.status}): ${JSON.stringify(created.json).slice(0, 300)}`); process.exit(1); }
   appId = created.json.app.id;
   ok(`Created app ${c.b}${APP}${c.x}`);
-}
-
-// 3. env vars — generate a fresh password unless one is supplied
-const APP_PASSWORD = process.env.APP_PASSWORD || crypto.randomBytes(9).toString('base64url');
-const env = [{ key: 'APP_PASSWORD', value: APP_PASSWORD }, { key: 'PORT', value: '8787' }];
-for (const k of ['TELEGRAM_TOKEN', 'TELEGRAM_CHAT_ID', 'NTFY_TOPIC', 'TWELVEDATA_KEY', 'VAPID_PUBLIC', 'VAPID_PRIVATE', 'VAPID_SUBJECT']) {
-  if (process.env[k]) env.push({ key: k, value: process.env[k] });
 }
 
 const definition = {
