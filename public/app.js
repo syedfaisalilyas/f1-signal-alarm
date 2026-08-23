@@ -240,6 +240,13 @@ function buildCard(w) {
     bar.style.background = f.readiness > 75 ? 'var(--warn)' : f.readiness > 45 ? 'var(--info)' : 'var(--faint)';
     meter.appendChild(bar);
     card.appendChild(meter);
+    if (a.regime && a.regime.adx != null) {
+      const strong = a.regime.adx >= (state.settings.cfg?.minAdx ?? 20);
+      card.appendChild(el('div', 'chips',
+        `<span class="chip ${strong ? 'ok' : 'no'}">ADX ${a.regime.adx.toFixed(0)}${strong ? ' trending' : ' chop'}</span>` +
+        `<span class="chip">EMA gap ${a.regime.emaSep?.toFixed(2) ?? '—'}%</span>` +
+        `<span class="chip">${a.regime.recentSignals} signals/30b</span>`));
+    }
     card.appendChild(el('div', 'chips', Object.entries(f.conditions)
       .map(([k, v]) => `<span class="chip ${v ? 'ok' : 'no'}">${k}${v ? ' ✓' : ' ✗'}</span>`).join('')
       + `<span class="chip">ready ${f.readiness}%</span>`));
@@ -596,6 +603,9 @@ function collectIndicatorCfg() {
     useTrail: bool('useTrail'), tp1Portion: num('tp1Portion') / 100,
     runner: bool('runner'), noStop: bool('noStop'), autoCoverage: num('autoCoverage'),
     minVol1h: num('minVol1h'), minVol1d: num('minVol1d'), tp1AtR: num('tp1AtR'),
+    minAdx: num('minAdx'), minEmaSep: num('minEmaSep'), maxRecentSignals: num('maxRecentSignals'),
+    rsiPeakExit: bool('rsiPeakExit'), rsiPeakLong: num('rsiPeakLong'),
+    rsiPeakShort: 100 - num('rsiPeakLong'), rsiPeakDrop: 5,
     tpMode: $('#c_tpMode').value, vpLen: num('vpLen'), vpRows: num('vpRows'),
     vaPct: num('vaPct'), hvnThr: num('hvnThr'), minTpAtr: num('minTpAtr'), fallbackRR: num('fallbackRR'),
     maxBars: num('maxBars'), requireVol: bool('requireVol'), useTrend: bool('useTrend'),
@@ -609,7 +619,8 @@ function applySettingsToForm() {
   ['emaFast', 'emaSlow', 'rsiLen', 'rsiOB', 'rsiOS', 'atrLen', 'rr1', 'rr2', 'slLookback', 'slBuf', 'maxBars',
     'requireVol', 'useTrend', 'useRevExit', 'beAfterTp1', 'vpLen', 'vpRows', 'vaPct', 'hvnThr',
     'minTpAtr', 'fallbackRR', 'beAtR', 'trailAfterR', 'trailAtr', 'useTrail', 'runner', 'autoCoverage',
-    'minVol1h', 'minVol1d', 'tp1AtR', 'noStop'].forEach(k => set(k, s[k]));
+    'minVol1h', 'minVol1d', 'tp1AtR', 'noStop', 'minAdx', 'minEmaSep', 'maxRecentSignals',
+    'rsiPeakExit', 'rsiPeakLong'].forEach(k => set(k, s[k]));
   set('tp1Portion', Math.round((s.tp1Portion ?? 0.5) * 100));
   $('#levOverride').value = Object.entries(state.settings.levOverride || {})
     .map(([k, v]) => `${k}=${v}`).join(', ');
@@ -622,6 +633,20 @@ function applySettingsToForm() {
   $('#lowVolAlerts').checked = state.settings.lowVolAlerts !== false;
   $('#lowVol1h').value = state.settings.lowVol1h ?? 1.0;
 }
+const PRESETS = {
+  all:      { minAdx: 0,  minEmaSep: 0,    maxRecentSignals: 0 },
+  balanced: { minAdx: 20, minEmaSep: 0,    maxRecentSignals: 0 },
+  strict:   { minAdx: 20, minEmaSep: 0.20, maxRecentSignals: 0 },
+  sniper:   { minAdx: 0,  minEmaSep: 0.25, maxRecentSignals: 0 }
+};
+$('#c_preset').onchange = e => {
+  const p = PRESETS[e.target.value];
+  if (!p) return;
+  $('#c_minAdx').value = p.minAdx;
+  $('#c_minEmaSep').value = p.minEmaSep;
+  $('#c_maxRecentSignals').value = p.maxRecentSignals;
+};
+
 $('#saveCfg').onclick = async () => {
   await saveSettings({
     cfg: collectIndicatorCfg(),

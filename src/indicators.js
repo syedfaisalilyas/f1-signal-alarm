@@ -111,3 +111,32 @@ export function crossPrice(prevFast, prevSlow, fastLen, slowLen) {
   if (Math.abs(denom) < 1e-12) return null;
   return (prevSlow * (1 - kS) - prevFast * (1 - kF)) / denom;
 }
+
+// ── ADX / DI (Wilder) — trend strength, to tell a run from a chop ──
+export function adx(highs, lows, closes, len) {
+  const n = closes.length;
+  const plusDM = new Array(n).fill(0), minusDM = new Array(n).fill(0), tr = new Array(n).fill(0);
+  for (let i = 1; i < n; i++) {
+    const up = highs[i] - highs[i - 1];
+    const dn = lows[i - 1] - lows[i];
+    plusDM[i] = (up > dn && up > 0) ? up : 0;
+    minusDM[i] = (dn > up && dn > 0) ? dn : 0;
+    tr[i] = Math.max(highs[i] - lows[i], Math.abs(highs[i] - closes[i - 1]), Math.abs(lows[i] - closes[i - 1]));
+  }
+  const atrS = rma(tr.slice(1), len), pS = rma(plusDM.slice(1), len), mS = rma(minusDM.slice(1), len);
+  const pDI = new Array(n).fill(null), mDI = new Array(n).fill(null), dx = new Array(n).fill(null);
+  for (let i = 1; i < n; i++) {
+    const a = atrS[i - 1], p = pS[i - 1], m = mS[i - 1];
+    if (a === null || p === null || m === null || a === 0) continue;
+    pDI[i] = 100 * p / a;
+    mDI[i] = 100 * m / a;
+    const sum = pDI[i] + mDI[i];
+    dx[i] = sum === 0 ? 0 : 100 * Math.abs(pDI[i] - mDI[i]) / sum;
+  }
+  const compact = dx.filter(v => v !== null);
+  const sm = rma(compact, len);
+  const out = new Array(n).fill(null);
+  let j = 0;
+  for (let i = 0; i < n; i++) if (dx[i] !== null) out[i] = sm[j++];
+  return { adx: out, plusDI: pDI, minusDI: mDI };
+}

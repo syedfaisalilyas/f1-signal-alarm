@@ -1,7 +1,7 @@
 // F1 Scalper Pro — JS port of the Pine v5 script.
 // Walks every bar exactly like Pine so state/TP/SL match the chart.
 
-import { ema, sma, rsi, macd, atr, lowest, highest, emaNext, crossPrice } from './indicators.js';
+import { ema, sma, rsi, macd, atr, adx, lowest, highest, emaNext, crossPrice } from './indicators.js';
 import { VP_DEFAULTS, buildProfile, pickTargets, atNode } from './volumeprofile.js';
 import { calibrate } from './calibrate.js';
 
@@ -18,6 +18,12 @@ export const DEFAULTS = {
   tp1Portion: 0.5,          // fraction of the position banked at TP1
   noStop: false,            // no protective stop: hold until the trail engages or the signal flips
   runner: true,             // no fixed TP2 — bank part at TP1, trail the rest
+  minAdx: 20,               // skip entries unless trend strength clears this
+  minEmaSep: 0,             // ...and the EMAs have separated by this % of price
+  maxRecentSignals: 0,      // ...and there haven't been this many signals lately (chop guard)
+  recentWindow: 30,
+  rsiPeakExit: true,        // close into an RSI extreme that has started rolling over
+  rsiPeakLong: 75, rsiPeakShort: 25, rsiPeakDrop: 5,
   minVol1h: 0,              // skip entries unless the 1h range is at least this %
   minVol1d: 0,              // ...and the 24h range at least this %
   tp1AtR: 0.5,              // also bank at this R if it comes before the shelf
@@ -44,6 +50,8 @@ export function analyze(candles, userCfg = {}) {
   const m = macd(close, cfg.macdFast, cfg.macdSlow, cfg.macdSignal);
   const a = atr(high, low, close, cfg.atrLen);
   const vMa = sma(vol, cfg.volLen);
+  const dmi = adx(high, low, close, 14);
+  const adxS = dmi.adx;
 
   const ready = i => eF[i] !== null && eS[i] !== null && r[i] !== null && m.signal[i] !== null && a[i] !== null && vMa[i] !== null;
 
@@ -63,6 +71,24 @@ export function analyze(candles, userCfg = {}) {
   const vol1dAt = i => rangePct(i, perDay);
   // A threshold can't be enforced on history we don't have — don't silently
   // drop every signal when the window is shorter than a day.
+  // In a chop the EMAs sit on top of each other and cross repeatedly; in a run
+  // they separate and stay apart. ADX measures the same thing independently.
+  const emaSepPct = i => (eF[i] === null || eS[i] === null) ? null : Math.abs(eF[i] - eS[i]) / close[i] * 100;
+  const recentSignalCount = i => {
+    let c = 0;
+    for (let k = Math.max(1, i - cfg.recentWindow); k < i; k++) {
+      if (!ready(k) || !ready(k - 1)) continue;
+      if ((eF[k - 1] <= eS[k - 1] && eF[k] > eS[k]) || (eF[k - 1] >= eS[k - 1] && eF[k] < eS[k])) c++;
+    }
+    return c;
+  };
+  const chopOk = i => {
+    if (cfg.minAdx > 0 && (adxS[i] === null || adxS[i] < cfg.minAdx)) return false;
+    if (cfg.minEmaSep > 0) { const sep = emaSepPct(i); if (sep === null || sep < cfg.minEmaSep) return false; }
+    if (cfg.maxRecentSignals > 0 && recentSignalCount(i) > cfg.maxRecentSignals) return false;
+    return true;
+  };
+
   const regimeOk = i => {
     if (cfg.minVol1h > 0) { const v = vol1hAt(i); if (v !== null && v < cfg.minVol1h) return false; }
     if (cfg.minVol1d > 0) { const v = vol1dAt(i); if (v !== null && v < cfg.minVol1d) return false; }
@@ -87,8 +113,8 @@ export function analyze(candles, userCfg = {}) {
   const rsiOkL = i => !cfg.rsiTwoSided || r[i] < cfg.rsiOB;
   const rsiOkS = i => !cfg.rsiTwoSided || r[i] > cfg.rsiOS;
 
-  const longSig = i => longBase(i) && rsiOkL(i) && trendOkL(i) && atrOk(i) && volOk(i) && regimeOk(i);
-  const shortSig = i => shortBase(i) && rsiOkS(i) && trendOkS(i) && atrOk(i) && volOk(i) && regimeOk(i);
+  const longSig = i => longBase(i) && rsiOkL(i) && trendOkL(i) && atrOk(i) && volOk(i) && regimeOk(i) && chopOk(i);
+  const shortSig = i => shortBase(i) && rsiOkS(i) && trendOkS(i) && atrOk(i) && volOk(i) && regimeOk(i) && chopOk(i);
 
   // ── reversal candles ──
   const body = i => Math.abs(close[i] - open[i]);
@@ -132,6 +158,7 @@ export function analyze(candles, userCfg = {}) {
   let entryBar = null, tp1Done = false, lastExit = -9999;
   let entryProf = null;
   let mfePx = null, maePx = null, beDone = false, tp2Hit = false;
+  let rsiPeak = null;
   const trades = [];
   let openTrade = null;
 
@@ -155,7 +182,13 @@ export function analyze(candles, userCfg = {}) {
         if (cfg.useTrail && mfeR >= cfg.trailAfterR) slP = Math.max(slP ?? -Infinity, mfePx - a[i] * cfg.trailAtr);
 
         if (i > entryBar) {
-          if (cfg.useRevExit && bearRev(i) && revConfirmed(i, 1) && (!cfg.revOnlyInProfit || close[i] > entryP)) { exitPx = close[i]; exitTag = revTag(i, 1); flip = shortSig(i); }
+          // Close into the peak: RSI has to reach an extreme AND start rolling
+          // over. The extreme alone just means strength.
+          if (cfg.rsiPeakExit && r[i] >= cfg.rsiPeakLong) rsiPeak = Math.max(rsiPeak ?? 0, r[i]);
+          if (cfg.rsiPeakExit && rsiPeak !== null && r[i] <= rsiPeak - cfg.rsiPeakDrop && close[i] > entryP) {
+            exitPx = close[i]; exitTag = 'RSI PEAK';
+          }
+          else if (cfg.useRevExit && bearRev(i) && revConfirmed(i, 1) && (!cfg.revOnlyInProfit || close[i] > entryP)) { exitPx = close[i]; exitTag = revTag(i, 1); flip = shortSig(i); }
           else if (shortSig(i)) { exitPx = close[i]; exitTag = 'FLIP'; flip = true; }
           else if (cfg.maxBars > 0 && i - entryBar >= cfg.maxBars) { exitPx = close[i]; exitTag = 'TIME'; }
         }
@@ -173,7 +206,11 @@ export function analyze(candles, userCfg = {}) {
         if (cfg.useTrail && mfeR >= cfg.trailAfterR) slP = Math.min(slP ?? Infinity, mfePx + a[i] * cfg.trailAtr);
 
         if (i > entryBar) {
-          if (cfg.useRevExit && bullRev(i) && revConfirmed(i, -1) && (!cfg.revOnlyInProfit || close[i] < entryP)) { exitPx = close[i]; exitTag = revTag(i, -1); flip = longSig(i); }
+          if (cfg.rsiPeakExit && r[i] <= cfg.rsiPeakShort) rsiPeak = Math.min(rsiPeak ?? 100, r[i]);
+          if (cfg.rsiPeakExit && rsiPeak !== null && r[i] >= rsiPeak + cfg.rsiPeakDrop && close[i] < entryP) {
+            exitPx = close[i]; exitTag = 'RSI PEAK';
+          }
+          else if (cfg.useRevExit && bullRev(i) && revConfirmed(i, -1) && (!cfg.revOnlyInProfit || close[i] < entryP)) { exitPx = close[i]; exitTag = revTag(i, -1); flip = longSig(i); }
           else if (longSig(i)) { exitPx = close[i]; exitTag = 'FLIP'; flip = true; }
           else if (cfg.maxBars > 0 && i - entryBar >= cfg.maxBars) { exitPx = close[i]; exitTag = 'TIME'; }
         }
@@ -267,6 +304,7 @@ export function analyze(candles, userCfg = {}) {
       pos = dir; entryBar = i; tp1Done = false; beDone = false; tp2Hit = false;
       mfePx = close[i];
       maePx = close[i];
+      rsiPeak = null;
       openTrade = {
         side: dir === 1 ? 'LONG' : 'SHORT', entryBar: i, entryTime: candles[i].t,
         vol1h: vol1hAt(i), vol1d: vol1dAt(i), atrPctAtEntry: atrPct(i),
@@ -331,7 +369,8 @@ export function analyze(candles, userCfg = {}) {
       rows: liveProf.rows.map(x => ({ p: x.price, s: x.share, va: x.inVA, h: x.isHVN, poc: x.isPOC })),
       atNode: atNode(liveProf, px, a[li] * 0.6)
     },
-    regime: { vol1h: vol1hAt(li), vol1d: vol1dAt(li), ok: regimeOk(li) },
+    regime: { vol1h: vol1hAt(li), vol1d: vol1dAt(li), ok: regimeOk(li) && chopOk(li),
+              adx: adxS[li], emaSep: emaSepPct(li), recentSignals: recentSignalCount(li) },
     atr: a[li], atrPct: atrPct(li), rsi: r[li],
     emaFast: eF[li], emaSlow: eS[li], emaTrend: eT[li],
     macdLine: m.line[li], macdSignal: m.signal[li], macdHist: m.hist[li],

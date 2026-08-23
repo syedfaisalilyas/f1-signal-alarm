@@ -268,7 +268,7 @@ function slim(a) {
   return {
     price: a.price, rsi: a.rsi, atrPct: a.atrPct, volRatio: a.volRatio,
     emaFast: a.emaFast, emaSlow: a.emaSlow, macdHist: a.macdHist,
-    position: a.position, forecast: a.forecast, profile: a.profile, calibration: a.calibration, stats: a.stats,
+    position: a.position, forecast: a.forecast, profile: a.profile, calibration: a.calibration, regime: a.regime, stats: a.stats,
     recent: a.trades.slice(-10).reverse(),
     lastClosedTime: a.lastClosedTime
   };
