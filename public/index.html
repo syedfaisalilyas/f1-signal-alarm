@@ -144,6 +144,15 @@
     <label class="row"><span>Runner (no fixed TP2 — let winners run)</span><input type="checkbox" id="c_runner" checked></label>
     <label class="row"><span>Stop must clear this % of winners' pullbacks</span><input type="number" id="c_autoCoverage" step="0.05" min="0.5" max="0.99" value="0.85"></label>
 
+    <h4>Only trade when volatile</h4>
+    <div class="gridcfg">
+      <label>Min 1H range (%)<input type="number" id="c_minVol1h" step="0.5" value="0"></label>
+      <label>Min 24H range (%)<input type="number" id="c_minVol1d" step="1" value="0"></label>
+      <label>Bank 50% at (R)<input type="number" id="c_tp1AtR" step="0.1" value="0.5"></label>
+    </div>
+    <p class="hint">0 = off. Tested on live candles these filters cut profit (+9.6R → +2.4R)
+       on already-volatile coins, so they ship off. Useful if you add quieter pairs.</p>
+
     <h4>Take profit</h4>
     <label class="row"><span>TP source</span>
       <select id="c_tpMode" style="padding:7px 9px;border-radius:8px;border:1px solid var(--line);background:var(--panel2)">

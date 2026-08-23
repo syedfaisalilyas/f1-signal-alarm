@@ -259,7 +259,7 @@ function buildCard(w) {
 
   card.appendChild(el('div', 'cfoot', `
     <span>RSI ${a.rsi?.toFixed(1) ?? '—'} · ATR ${a.atrPct?.toFixed(2) ?? '—'}% · Vol ${a.volRatio?.toFixed(2) ?? '—'}x</span>
-    <span>${a.stats.trades}t · ${a.stats.winRate.toFixed(0)}% · ${a.stats.totalR >= 0 ? '+' : ''}${a.stats.totalR.toFixed(1)}R</span>`));
+    <span>${a.stats.trades}t · ${a.stats.winRate.toFixed(0)}% win · ${a.stats.totalR >= 0 ? '+' : ''}${a.stats.totalR.toFixed(1)}R</span>`));
 
   return card;
 }
@@ -319,6 +319,7 @@ function openHistory(id) {
   $('#histStats').innerHTML = [
     ['Trades', String(s2.trades)],
     ['Win rate', s2.winRate.toFixed(0) + '%'],
+    ['Closed green', (s2.greenRate ?? s2.winRate).toFixed(0) + '%'],
     ['Total R', sgn(s2.totalR.toFixed(2)) + 'R'],
     ['Avg R', sgn(s2.avgR.toFixed(2)) + 'R'],
     ...(lev ? [[`Last ${trades.length} @${lev}x`, sgn((sumPct * lev).toFixed(1)) + '%']] : [])
@@ -566,6 +567,7 @@ function collectIndicatorCfg() {
     beAtR: num('beAtR'), trailAfterR: num('trailAfterR'), trailAtr: num('trailAtr'),
     useTrail: bool('useTrail'), tp1Portion: num('tp1Portion') / 100,
     runner: bool('runner'), autoCoverage: num('autoCoverage'),
+    minVol1h: num('minVol1h'), minVol1d: num('minVol1d'), tp1AtR: num('tp1AtR'),
     tpMode: $('#c_tpMode').value, vpLen: num('vpLen'), vpRows: num('vpRows'),
     vaPct: num('vaPct'), hvnThr: num('hvnThr'), minTpAtr: num('minTpAtr'), fallbackRR: num('fallbackRR'),
     maxBars: num('maxBars'), requireVol: bool('requireVol'), useTrend: bool('useTrend'),
@@ -578,7 +580,8 @@ function applySettingsToForm() {
   const set = (id, v) => { const n = $('#c_' + id); if (n) { if (n.type === 'checkbox') n.checked = !!v; else n.value = v; } };
   ['emaFast', 'emaSlow', 'rsiLen', 'rsiOB', 'rsiOS', 'atrLen', 'rr1', 'rr2', 'slLookback', 'slBuf', 'maxBars',
     'requireVol', 'useTrend', 'useRevExit', 'beAfterTp1', 'vpLen', 'vpRows', 'vaPct', 'hvnThr',
-    'minTpAtr', 'fallbackRR', 'beAtR', 'trailAfterR', 'trailAtr', 'useTrail', 'runner', 'autoCoverage'].forEach(k => set(k, s[k]));
+    'minTpAtr', 'fallbackRR', 'beAtR', 'trailAfterR', 'trailAtr', 'useTrail', 'runner', 'autoCoverage',
+    'minVol1h', 'minVol1d', 'tp1AtR'].forEach(k => set(k, s[k]));
   set('tp1Portion', Math.round((s.tp1Portion ?? 0.5) * 100));
   $('#levOverride').value = Object.entries(state.settings.levOverride || {})
     .map(([k, v]) => `${k}=${v}`).join(', ');

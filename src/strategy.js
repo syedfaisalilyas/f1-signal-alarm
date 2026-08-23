@@ -17,6 +17,9 @@ export const DEFAULTS = {
   useRevExit: true, revOnlyInProfit: true, beAfterTp1: true, maxBars: 40,
   tp1Portion: 0.5,          // fraction of the position banked at TP1
   runner: true,             // no fixed TP2 — bank part at TP1, trail the rest
+  minVol1h: 0,              // skip entries unless the 1h range is at least this %
+  minVol1d: 0,              // ...and the 24h range at least this %
+  tp1AtR: 0.5,              // also bank at this R if it comes before the shelf
   autoCoverage: 0.85,       // stop must clear this share of winners' pullbacks
   beAtR: 1.0,               // move the stop to entry once the trade reaches this R
   useTrail: true,           // trail the stop behind the running high/low
@@ -43,6 +46,28 @@ export function analyze(candles, userCfg = {}) {
 
   const ready = i => eF[i] !== null && eS[i] !== null && r[i] !== null && m.signal[i] !== null && a[i] !== null && vMa[i] !== null;
 
+  // Regime: the same range-over-low measure the volatility board ranks by,
+  // computed from this series so it can be tested bar by bar.
+  const barMs = candles.length > 1 ? candles[1].t - candles[0].t : 300000;
+  const perHour = Math.max(1, Math.round(3600000 / barMs));
+  const perDay = Math.max(1, Math.round(86400000 / barMs));
+  const rangePct = (i, span) => {
+    const from = i - span + 1;
+    if (from < 0) return null;
+    let hi = -Infinity, lo = Infinity;
+    for (let k = from; k <= i; k++) { if (high[k] > hi) hi = high[k]; if (low[k] < lo) lo = low[k]; }
+    return lo > 0 ? (hi - lo) / lo * 100 : null;
+  };
+  const vol1hAt = i => rangePct(i, perHour);
+  const vol1dAt = i => rangePct(i, perDay);
+  // A threshold can't be enforced on history we don't have — don't silently
+  // drop every signal when the window is shorter than a day.
+  const regimeOk = i => {
+    if (cfg.minVol1h > 0) { const v = vol1hAt(i); if (v !== null && v < cfg.minVol1h) return false; }
+    if (cfg.minVol1d > 0) { const v = vol1dAt(i); if (v !== null && v < cfg.minVol1d) return false; }
+    return true;
+  };
+
   // ── per-bar condition helpers (mirrors the Pine booleans) ──
   const crossUp = i => i > 0 && ready(i) && ready(i - 1) && eF[i - 1] <= eS[i - 1] && eF[i] > eS[i];
   const crossDn = i => i > 0 && ready(i) && ready(i - 1) && eF[i - 1] >= eS[i - 1] && eF[i] < eS[i];
@@ -61,8 +86,8 @@ export function analyze(candles, userCfg = {}) {
   const rsiOkL = i => !cfg.rsiTwoSided || r[i] < cfg.rsiOB;
   const rsiOkS = i => !cfg.rsiTwoSided || r[i] > cfg.rsiOS;
 
-  const longSig = i => longBase(i) && rsiOkL(i) && trendOkL(i) && atrOk(i) && volOk(i);
-  const shortSig = i => shortBase(i) && rsiOkS(i) && trendOkS(i) && atrOk(i) && volOk(i);
+  const longSig = i => longBase(i) && rsiOkL(i) && trendOkL(i) && atrOk(i) && volOk(i) && regimeOk(i);
+  const shortSig = i => shortBase(i) && rsiOkS(i) && trendOkS(i) && atrOk(i) && volOk(i) && regimeOk(i);
 
   // ── reversal candles ──
   const body = i => Math.abs(close[i] - open[i]);
@@ -206,9 +231,13 @@ export function analyze(candles, userCfg = {}) {
         // moves that pay for everything else.
         entryProf = buildProfile(candles, i, cfg);
         const t = pickTargets(entryProf, entryP, dir, a[i] * cfg.minTpAtr, risk, cfg.fallbackRR);
-        tp1P = t.tp1;
+        // Bank at whichever comes first: the shelf, or a fixed R. Taking the
+        // nearer one books profit on more trades, at the cost of a smaller slice
+        // riding the big moves.
+        const rTarget = cfg.tp1AtR > 0 ? (dir === 1 ? entryP + risk * cfg.tp1AtR : entryP - risk * cfg.tp1AtR) : null;
+        tp1P = rTarget === null ? t.tp1 : (dir === 1 ? Math.min(t.tp1, rTarget) : Math.max(t.tp1, rTarget));
         tp2P = null;
-        tpSource = `${t.source.split(' → ')[0]} → runner`;
+        tpSource = (rTarget !== null && tp1P === rTarget ? `${cfg.tp1AtR}R` : t.source.split(' → ')[0]) + ' → runner';
       } else if (cfg.tpMode === 'profile') {
         entryProf = buildProfile(candles, i, cfg);
         const t = pickTargets(entryProf, entryP, dir, a[i] * cfg.minTpAtr, risk, cfg.fallbackRR);
@@ -246,9 +275,11 @@ export function analyze(candles, userCfg = {}) {
     trailing: beDone
   } : null;
 
-  const wins = trades.filter(t => t.r >= 0).length;
+  const wins = trades.filter(t => t.r > 0).length;
+  const green = trades.filter(t => t.r >= -0.02).length;   // profit or scratch
   const stats = {
     trades: trades.length, wins, losses: trades.length - wins,
+    green, greenRate: trades.length ? (green / trades.length) * 100 : 0,
     winRate: trades.length ? (wins / trades.length) * 100 : 0,
     totalR: trades.reduce((s, t) => s + t.r, 0),
     avgR: trades.length ? trades.reduce((s, t) => s + t.r, 0) / trades.length : 0
@@ -277,6 +308,7 @@ export function analyze(candles, userCfg = {}) {
       rows: liveProf.rows.map(x => ({ p: x.price, s: x.share, va: x.inVA, h: x.isHVN, poc: x.isPOC })),
       atNode: atNode(liveProf, px, a[li] * 0.6)
     },
+    regime: { vol1h: vol1hAt(li), vol1d: vol1dAt(li), ok: regimeOk(li) },
     atr: a[li], atrPct: atrPct(li), rsi: r[li],
     emaFast: eF[li], emaSlow: eS[li], emaTrend: eT[li],
     macdLine: m.line[li], macdSignal: m.signal[li], macdHist: m.hist[li],
