@@ -6,11 +6,8 @@ services:
     region: frankfurt          # must be non-US: Binance returns HTTP 451 to US IPs
     healthCheckPath: /
     envVars:
+      # Generated so the instance is never publicly open, even on first boot.
+      # The Telegram credentials are set through the API after the service exists,
+      # to keep them out of this public repo.
       - key: APP_PASSWORD
-        sync: false
-      - key: TELEGRAM_TOKEN
-        sync: false
-      - key: TELEGRAM_CHAT_ID
-        sync: false
-      - key: NTFY_TOPIC
-        sync: false
+        generateValue: true
