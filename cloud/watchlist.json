@@ -1,0 +1,46 @@
+{
+  "watches": [
+    {
+      "id": "futures:TUTUSDT:3m",
+      "enabled": true,
+      "cfg": {},
+      "addedAt": 1787504772866,
+      "market": "futures",
+      "symbol": "TUTUSDT",
+      "interval": "3m"
+    },
+    {
+      "id": "futures:TUTUSDT:5m",
+      "enabled": true,
+      "cfg": {},
+      "addedAt": 1787504779448,
+      "market": "futures",
+      "symbol": "TUTUSDT",
+      "interval": "5m"
+    },
+    {
+      "id": "futures:TUTUSDT:1m",
+      "enabled": true,
+      "cfg": {},
+      "addedAt": 1787504955105,
+      "market": "futures",
+      "symbol": "TUTUSDT",
+      "interval": "1m"
+    },
+    {
+      "id": "futures:SPKUSDT:5m",
+      "enabled": true,
+      "cfg": {},
+      "addedAt": 1787517653622,
+      "market": "futures",
+      "symbol": "SPKUSDT",
+      "interval": "5m"
+    }
+  ],
+  "settings": {
+    "muted": false,
+    "lowVolAlerts": true,
+    "lowVol1h": 1,
+    "levOverride": {}
+  }
+}

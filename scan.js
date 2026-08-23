@@ -3,8 +3,10 @@
 // by tick; this wakes up, looks at what closed since last time, alerts on it and
 // exits. Same strategy code, same messages — only the trigger differs.
 //
-// State lives in cloud/state.json (committed) rather than data/state.json, so a
-// runner and your Mac can't fight over the same file.
+// Two files, deliberately: cloud/watchlist.json is configuration and lives on
+// main, so editing it changes what gets scanned. cloud/state.json is runtime —
+// what has already been alerted on — and is restored from the state branch each
+// run. Keeping them together meant an edited watchlist was silently discarded.
 
 import './src/env.js';   // must be first — populates process.env from .env
 import fs from 'fs';
@@ -15,13 +17,16 @@ import { buildMessage, dispatch, initPush } from './src/notify.js';
 
 const DIR = path.join(process.cwd(), 'cloud');
 const STATE = path.join(DIR, 'state.json');
+const WATCHLIST = path.join(DIR, 'watchlist.json');
 const SNAPSHOT = path.join(DIR, 'snapshot.json');
 const BARS = 600;
 
-const state = JSON.parse(fs.readFileSync(STATE, 'utf8'));
+const cfgFile = JSON.parse(fs.readFileSync(WATCHLIST, 'utf8'));
+const state = fs.existsSync(STATE) ? JSON.parse(fs.readFileSync(STATE, 'utf8')) : {};
 state.marks ||= {};
 state.log ||= [];
-const settings = state.settings || {};
+state.watches = cfgFile.watches || [];
+const settings = cfgFile.settings || {};
 const globalCfg = settings.cfg || {};
 
 initPush();
@@ -109,7 +114,9 @@ for (const [kind, w, a] of fired) {
 if (state.log.length > 300) state.log.length = 300;
 state.lastRun = Date.now();
 
-fs.writeFileSync(STATE, JSON.stringify(state, null, 2));
+// The watchlist is not written back — main owns it.
+fs.writeFileSync(STATE, JSON.stringify(
+  { marks: state.marks, log: state.log, lastRun: state.lastRun }, null, 2));
 fs.writeFileSync(SNAPSHOT, JSON.stringify({
   at: state.lastRun,
   sources: feedSources(),

@@ -129,43 +129,55 @@ public/              UI (vanilla, no build step)
 
 ---
 
-## Deploying
+## Running it 24/7, free
 
-### A) Public link right now (free, zero accounts)
+The scanner runs on **GitHub Actions**, so alerts keep arriving with the Mac shut.
+Nothing to pay for, no account beyond the GitHub one that already hosts this repo.
+
+| what | where |
+|---|---|
+| Dashboard (read-only) | https://syedfaisalilyas.github.io/f1-signal-alarm/ |
+| Alerts | Telegram, from repo secrets `TELEGRAM_TOKEN` / `TELEGRAM_CHAT_ID` |
+| Schedule | `.github/workflows/scan.yml`, every 5 minutes |
+| Watchlist | `cloud/watchlist.json` — run `npm run sync-cloud`, then commit and push |
+| Runtime state | the `state` branch, one force-pushed commit (keeps main's history clean) |
+| Check it's alive | Actions → scan → Run workflow → tick *Also send a test alert* |
+
+`scan.js` is the whole thing: it loads the watchlist, pulls candles over REST, runs the
+same `analyze()` the live server uses, and alerts on anything that changed since the
+previous run.
+
+### What you give up versus running the server
+
+- **Cadence.** Scans every 5 minutes instead of tick by tick. Entries and exits are
+  detected off closed candles either way, so they still fire — just up to 5 minutes late.
+  Pre-alerts read the *forming* candle, so on a 1m or 3m chart they are much coarser and
+  some will be missed entirely. Pre-alerts are the real casualty of going serverless.
+- **Data source.** Binance answers HTTP 451 to US datacentres, and GitHub's runners are
+  US-hosted. `src/geofeed.js` covers that: spot comes from `data-api.binance.vision`
+  (Binance's own mirror) and perps from MEXC. MEXC has no 3m contract candle, so 3m is
+  rolled up from 1m. Perp prices track Binance closely but are not identical.
+- **No UI writes.** The Pages dashboard is read-only — it renders the published snapshot.
+  Adding or removing symbols happens through `npm run sync-cloud`.
+
+### Two caveats worth knowing
+
+- GitHub **disables scheduled workflows after 60 days** without repo activity. A push to
+  the repo resets that clock.
+- A scanner polling forever is *compute unrelated to the repository*, which GitHub's
+  Actions terms discourage. The cadence here is modest and the runs are seconds long, but
+  it is your account carrying that risk. A $2/month VM or a card-verified free tier
+  (Render, Northflank) is the route that carries none.
+
+## Public link to the live server
+
 ```bash
 ./start.sh      # scanner + Cloudflare tunnel + keeps the Mac awake
 ./stop.sh
 ```
+
 Prints a `https://….trycloudflare.com/?key=…` link. Real HTTPS, so **web push works**
-on your phone through it. Caveat: it runs on your Mac — sleep the Mac and it stops.
-The URL is new on every restart.
-
-### B) Always-on (needs a free account, ~5 min)
-The repo has a `Dockerfile`, so any container host works. **Koyeb** is the best free fit —
-its free instance stays running (Render's free tier sleeps after 15 min of no traffic,
-which would silence your alarms).
-
-Every push to `main` builds `ghcr.io/<you>/f1-signal-alarm:latest` via GitHub Actions.
-
-**Scripted:** grab an API token at
-[app.koyeb.com/settings/api](https://app.koyeb.com/settings/api), then:
-```bash
-TELEGRAM_TOKEN=... TELEGRAM_CHAT_ID=... npm run deploy -- <koyeb-token>
-```
-Creates the app, deploys the free instance, waits for healthy, prints your URL + key.
-
-**Or via the UI:** Create Service → GitHub → this repo → it autodetects the Dockerfile.
-
-> ⚠️ **Pick a non-US region** (`fra`, `par`, `eu`, `ap`). Binance returns HTTP 451 to
-> US IPs, so a service in `dal`/`rdu`/`mci`/`dsm` gets no market data at all.
-> The deploy script defaults to `fra`.
-
-> The GHCR image is private by default. Either make it public
-> (repo → Packages → f1-signal-alarm → Package settings → Change visibility), or let
-> Koyeb build from the Dockerfile via the GitHub integration instead.
-
-> Free container hosts have no persistent disk, so `data/state.json` resets on redeploy
-> and you'd re-add your symbols. Everything else works identically.
+on your phone through it. Runs on your Mac, and the URL changes every restart.
 
 ### Access control
 `APP_PASSWORD` in `.env` gates the API and the websocket. It's generated for you on
