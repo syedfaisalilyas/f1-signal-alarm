@@ -1,0 +1,24 @@
+# Render's free tier spins a service down after 15 min without traffic, which would
+# stop the scanner and silence alarms. This pings it often enough to stay awake.
+# Each run pings 5× a minute apart so a delayed schedule still covers the gap.
+name: keep-alive
+
+on:
+  schedule:
+    - cron: '*/5 * * * *'
+  workflow_dispatch:
+
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Ping the scanner
+        env:
+          URL: ${{ vars.ALARM_URL }}
+        run: |
+          if [ -z "$URL" ]; then echo "ALARM_URL not set yet"; exit 0; fi
+          for i in 1 2 3 4 5; do
+            code=$(curl -s -o /dev/null -w '%{http_code}' --max-time 90 "$URL" || echo 000)
+            echo "$(date -u +%H:%M:%S) ping $i -> $code"
+            [ "$i" = 5 ] || sleep 60
+          done

@@ -3,10 +3,11 @@ services:
     name: f1-signal-alarm
     runtime: docker
     plan: free
+    region: frankfurt          # must be non-US: Binance returns HTTP 451 to US IPs
     healthCheckPath: /
     envVars:
       - key: APP_PASSWORD
-        generateValue: true
+        sync: false
       - key: TELEGRAM_TOKEN
         sync: false
       - key: TELEGRAM_CHAT_ID
