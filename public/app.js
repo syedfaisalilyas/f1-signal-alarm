@@ -56,8 +56,9 @@ function connect() {
       render();
       renderLog(payload.log);
       updateMuteBtn();
+      initVol();
     }
-    if (type === 'watches') { state.watches = payload; render(); }
+    if (type === 'watches') { state.watches = payload; render(); loadVol(); }
     if (type === 'tick') {
       const w = state.watches.find(x => x.id === payload.id);
       if (w) { w.analysis = payload.analysis; w.loading = false; w.error = null; patchCard(w); }
@@ -290,6 +291,97 @@ function logRow(i) {
     <span class="txt"><b>${i.title}</b><pre>${i.body}</pre></span>`);
 }
 
+// ─────────── volatility board ───────────
+let volData = [], volSort = 'vol1d', volLookupRow = null, volTimer = null;
+
+function volClass(v, tf) {
+  // thresholds scaled per window — 1% on 5m is a lot, on 1D it's nothing
+  const hot = { vol5m: 1.0, vol1h: 3.0, vol1d: 15 }[tf];
+  const mid = { vol5m: 0.4, vol1h: 1.2, vol1d: 6 }[tf];
+  if (v === null || v === undefined) return 'vlow';
+  return v >= hot ? 'vhot' : v >= mid ? 'vmid' : 'vlow';
+}
+const vpct = v => v === null || v === undefined ? '—' : v.toFixed(2) + '%';
+
+async function loadVol() {
+  const market = $('#volMarket').value, limit = $('#volLimit').value;
+  $('#volFoot').textContent = 'scanning…';
+  try {
+    const r = await api(`/api/volatility?market=${market}&limit=${limit}`);
+    const d = await r.json();
+    if (d.error) throw new Error(d.error);
+    volData = d.rows;
+    renderVol();
+  } catch (e) {
+    $('#volFoot').textContent = 'scan failed: ' + e.message;
+  }
+}
+
+function renderVol() {
+  const box = $('#volRows');
+  box.innerHTML = '';
+  const rows = [...volData].sort((a, b) => (b[volSort] ?? -1) - (a[volSort] ?? -1));
+  if (volLookupRow && !rows.some(r => r.symbol === volLookupRow.symbol)) box.appendChild(volRow(volLookupRow, true));
+  for (const r of rows) box.appendChild(volRow(r, volLookupRow?.symbol === r.symbol));
+  document.querySelectorAll('.volhdr .vnum').forEach(n => n.classList.toggle('active', n.dataset.k === volSort));
+  const flat = volData.filter(r => r.pinned && r.vol1h !== null && r.vol1h < Number($('#lowVol1h')?.value || 1)).map(r => r.symbol);
+  $('#volFoot').innerHTML =
+    `<span>${rows.length} coins · updated ${new Date().toLocaleTimeString()}</span>` +
+    `<span>${flat.length ? '😴 flat: ' + flat.join(', ') : 'click a row to watch it'}</span>`;
+}
+
+function volRow(r, isLookup) {
+  const n = el('div', 'volrow body' + (r.pinned ? ' pin' : '') + (isLookup ? ' pinlookup' : ''),
+    `<span class="vsym">${r.symbol}${r.pinned ? '<span class="star">⭐</span>' : ''}</span>
+     <span class="vnum ${volClass(r.vol5m, 'vol5m')}">${vpct(r.vol5m)}</span>
+     <span class="vnum ${volClass(r.vol1h, 'vol1h')}">${vpct(r.vol1h)}</span>
+     <span class="vnum ${volClass(r.vol1d, 'vol1d')}">${vpct(r.vol1d)}</span>`);
+  n.title = `24h volume $${(r.quoteVol / 1e6).toFixed(1)}M · change ${r.changePct?.toFixed(2)}%` +
+            (r.avg5m != null ? ` · avg 5m move ${r.avg5m.toFixed(2)}%` : '');
+  n.querySelector('.vsym').onclick = () => addWatch({ market: r.market, symbol: r.symbol });
+  return n;
+}
+
+$('#volToggle').onclick = () => {
+  const open = !$('#volBody').classList.toggle('hidden');
+  $('#volToggle').classList.toggle('closed', !open);
+  localStorage.setItem('volOpen', open ? '1' : '0');
+  if (open) loadVol();
+};
+$('#volMarket').onchange = () => { volLookupRow = null; loadVol(); };
+$('#volLimit').onchange = loadVol;
+$('#volRefresh').onclick = loadVol;
+
+let volSearchTimer;
+$('#volSearch').addEventListener('input', e => {
+  clearTimeout(volSearchTimer);
+  const q = e.target.value.trim().toUpperCase();
+  if (!q) { volLookupRow = null; renderVol(); return; }
+  volSearchTimer = setTimeout(async () => {
+    const sym = q.endsWith('USDT') || q.includes('/') ? q : q + 'USDT';
+    try {
+      const r = await api(`/api/volatility/lookup?market=${$('#volMarket').value}&symbol=${encodeURIComponent(sym)}`);
+      const d = await r.json();
+      if (d.error) { volLookupRow = null; $('#volFoot').textContent = `${sym}: ${d.error}`; renderVol(); return; }
+      volLookupRow = { ...d, pinned: state.watches.some(w => w.symbol === d.symbol) };
+      renderVol();
+    } catch { /* keep last good board */ }
+  }, 450);
+});
+
+document.querySelectorAll('.volhdr .vnum').forEach(n => {
+  n.onclick = () => { volSort = n.dataset.k; renderVol(); };
+});
+
+function initVol() {
+  const open = localStorage.getItem('volOpen') !== '0';
+  $('#volBody').classList.toggle('hidden', !open);
+  $('#volToggle').classList.toggle('closed', !open);
+  if (open) loadVol();
+  clearInterval(volTimer);
+  volTimer = setInterval(() => { if (!$('#volBody').classList.contains('hidden')) loadVol(); }, 90000);
+}
+
 // ─────────── sound ───────────
 function ensureAudio() {
   if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
@@ -400,12 +492,16 @@ function applySettingsToForm() {
   $('#preAlertBars').value = s.preAlertBars;
   $('#preAlerts').checked = state.settings.preAlerts !== false;
   $('#exitAlerts').checked = state.settings.exitAlerts !== false;
+  $('#lowVolAlerts').checked = state.settings.lowVolAlerts !== false;
+  $('#lowVol1h').value = state.settings.lowVol1h ?? 1.0;
 }
 $('#saveCfg').onclick = async () => {
   await saveSettings({
     cfg: collectIndicatorCfg(),
     preAlerts: $('#preAlerts').checked,
-    exitAlerts: $('#exitAlerts').checked
+    exitAlerts: $('#exitAlerts').checked,
+    lowVolAlerts: $('#lowVolAlerts').checked,
+    lowVol1h: Number($('#lowVol1h').value)
   });
   $('#modal').classList.add('hidden');
 };

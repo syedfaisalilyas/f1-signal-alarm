@@ -108,6 +108,20 @@ export function buildMessage(kind, w, a) {
     };
   }
 
+  if (kind === 'LOWVOL') {
+    const v = a.vol;
+    const title = `😴 ${w.symbol} has gone flat`;
+    const body =
+      `1H range ${v.vol1h?.toFixed(2)}%  (below ${v.threshold}%)\n` +
+      `5M ${v.vol5m?.toFixed(2)}%  ·  avg 5M ${v.avg5m?.toFixed(2)}%  ·  1D ${v.vol1d?.toFixed(1)}%\n` +
+      `Not enough movement to reach TP — consider swapping it out.`;
+    return {
+      title, body,
+      telegram: `<b>😴 ${w.symbol} ${w.interval} has gone flat</b>\n<pre>${body}</pre>`,
+      priority: 3, tags: ['sleeping']
+    };
+  }
+
   if (kind === 'EXIT') {
     const t = a.justClosed;
     const good = t.r >= 0;

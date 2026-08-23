@@ -10,6 +10,7 @@ import { Feed } from './src/feed.js';
 import { searchSymbols, ticker24h } from './src/providers.js';
 import { initPush, channelStatus, buildMessage, dispatch } from './src/notify.js';
 import { DEFAULTS } from './src/strategy.js';
+import { VolatilityScanner } from './src/volatility.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const app = express();
@@ -34,6 +35,7 @@ app.use(express.static(path.join(__dirname, 'public')));
 
 initPush();
 const feed = new Feed();
+const vol = new VolatilityScanner();
 
 // ─────────────── browser fan-out ───────────────
 function broadcast(type, payload) {
@@ -69,13 +71,14 @@ feed.on('signal', async (kind, watch, a) => {
   if (s.muted) return;
   if (kind === 'PREALERT' && s.preAlerts === false) return;
   if (kind === 'EXIT' && s.exitAlerts === false) return;
+  if (kind === 'LOWVOL' && s.lowVolAlerts === false) return;
 
   const msg = buildMessage(kind, watch, a);
   const entry = {
     kind, id: watch.id, symbol: watch.symbol, interval: watch.interval, market: watch.market,
     title: msg.title, body: msg.body, priority: msg.priority,
     side: a.position?.side || a.forecast?.side || a.justClosed?.side || null,
-    detail: kind === 'ENTRY' ? a.position : kind === 'EXIT' ? a.justClosed : a.forecast
+    detail: kind === 'ENTRY' ? a.position : kind === 'EXIT' ? a.justClosed : kind === 'LOWVOL' ? a.vol : a.forecast
   };
   store.pushLog(entry);
   broadcast('alert', entry);
@@ -83,6 +86,55 @@ feed.on('signal', async (kind, watch, a) => {
   const res = await dispatch(msg, store.get().pushSubs, ep => store.removeSub(ep));
   console.log(`[${kind}] ${watch.symbol} ${watch.interval} →`, res);
 });
+
+// A watched coin that stops moving can't reach TP — worth knowing before you
+// sit through it. Requires two consecutive flat reads so a quiet patch mid-scan
+// doesn't trigger it, and resets once the coin wakes up.
+const volState = new Map();
+function startLowVolWatch() {
+  const tick = async () => {
+    const s = store.get().settings;
+    if (s.lowVolAlerts === false || s.muted) return;
+    const threshold = Number(s.lowVol1h) > 0 ? Number(s.lowVol1h) : 1.0;
+    const markets = [...new Set(feed.snapshot().map(w => w.market))].filter(m => m !== 'forex');
+    for (const market of markets) {
+      let rows;
+      try { rows = await vol.board(market, feed.snapshot().filter(w => w.market === market).map(w => w.symbol)); }
+      catch { continue; }
+      const bySym = new Map(rows.map(r => [r.symbol, r]));
+
+      // Volatility belongs to the coin, not the chart interval — one alert per
+      // symbol however many timeframes of it are being watched.
+      const watched = new Map();
+      for (const w of feed.snapshot()) {
+        if (w.market !== market) continue;
+        if (!watched.has(w.symbol)) watched.set(w.symbol, []);
+        watched.get(w.symbol).push(w);
+      }
+
+      for (const [symbol, group] of watched) {
+        const r = bySym.get(symbol);
+        if (!r || r.vol1h === null) continue;
+        const key = `${market}:${symbol}`;
+        const st = volState.get(key) || { strikes: 0, notifiedAt: 0 };
+        if (r.vol1h < threshold) {
+          st.strikes++;
+          const cooled = Date.now() - st.notifiedAt > 2 * 60 * 60 * 1000;
+          if (st.strikes >= 2 && cooled) {
+            st.notifiedAt = Date.now();
+            const tfs = group.map(g => g.interval).join(', ');
+            feed.emit('signal', 'LOWVOL', { ...group[0], interval: tfs }, { vol: { ...r, threshold } });
+          }
+        } else {
+          st.strikes = 0;
+        }
+        volState.set(key, st);
+      }
+    }
+  };
+  setInterval(tick, 2 * 60 * 1000).unref();
+  setTimeout(tick, 45000);
+}
 
 function slimForUi(a) {
   return {
@@ -130,6 +182,27 @@ app.patch('/api/watches/:id', (req, res) => {
   res.json(w);
 });
 
+app.get('/api/volatility', async (req, res) => {
+  try {
+    const market = req.query.market === 'spot' ? 'spot' : 'futures';
+    const pinned = feed.snapshot().filter(w => w.market === market).map(w => w.symbol);
+    const rows = await vol.board(market, [...new Set(pinned)]);
+    const limit = Math.min(100, Math.max(5, Number(req.query.limit) || 20));
+    const top = rows.slice(0, limit);
+    // always surface watched symbols, even when they rank below the cut
+    for (const r of rows) if (r.pinned && !top.includes(r)) top.push(r);
+    res.json({ market, at: Date.now(), rows: top });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+app.get('/api/volatility/lookup', async (req, res) => {
+  try {
+    const market = req.query.market === 'spot' ? 'spot' : 'futures';
+    if (!req.query.symbol) return res.status(400).json({ error: 'symbol required' });
+    res.json(await vol.lookup(market, req.query.symbol));
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
 app.get('/api/settings', (_req, res) => res.json(store.get().settings));
 app.post('/api/settings', (req, res) => {
   Object.assign(store.get().settings, req.body || {});
@@ -170,5 +243,6 @@ server.listen(PORT, async () => {
   const watches = store.get().watches;
   for (const w of watches) await feed.add(w);
   feed.startWatchdog();
+  startLowVolWatch();
   if (watches.length) console.log(`  restored ${watches.length} watch(es)\n`);
 });

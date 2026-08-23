@@ -42,6 +42,43 @@
   </select>
 </section>
 
+<section class="volwrap">
+  <div class="volpanel">
+    <div class="volhead" id="volToggle">
+      <span class="caret" id="volCaret">⌃</span>
+      <h3>Volatility</h3>
+      <span class="info" title="Range as a percentage of the low, over each window — the same measure Binance ranks by.">ⓘ</span>
+      <div class="volhead-r" onclick="event.stopPropagation()">
+        <select id="volMarket" title="Market">
+          <option value="futures">USD-M</option>
+          <option value="spot">Spot</option>
+        </select>
+        <select id="volLimit" title="Rows">
+          <option>10</option><option selected>20</option><option>50</option>
+        </select>
+      </div>
+    </div>
+
+    <div id="volBody">
+      <div class="vollookup">
+        <input id="volSearch" type="search" placeholder="Check any coin — doge, pepe, tut…" autocomplete="off">
+        <button id="volRefresh" class="btn ghost" title="Refresh now">↻</button>
+      </div>
+
+      <div class="voltable">
+        <div class="volrow volhdr">
+          <span class="vsym">Symbol</span>
+          <span class="vnum sortable" data-k="vol5m">5M</span>
+          <span class="vnum sortable" data-k="vol1h">1H</span>
+          <span class="vnum sortable active" data-k="vol1d">1D</span>
+        </div>
+        <div id="volRows"></div>
+      </div>
+      <div class="volfoot" id="volFoot">loading…</div>
+    </div>
+  </div>
+</section>
+
 <main>
   <div id="grid" class="grid"></div>
   <div id="empty" class="empty">
@@ -69,6 +106,8 @@
     <h4>Alerts</h4>
     <label class="row"><span>Pre-alerts (signal forming)</span><input type="checkbox" id="preAlerts" checked></label>
     <label class="row"><span>Exit alerts (TP / SL hit)</span><input type="checkbox" id="exitAlerts" checked></label>
+    <label class="row"><span>Alert when a watched coin goes flat</span><input type="checkbox" id="lowVolAlerts" checked></label>
+    <label class="row"><span>Flat below (1H range)</span><input type="number" id="lowVol1h" step="0.1" min="0.1" value="1.0"><em>%</em></label>
     <label class="row"><span>Pre-alert distance</span><input type="number" id="preAlertPct" step="0.05" min="0.05" value="0.35"><em>%</em></label>
     <label class="row"><span>Pre-alert lead</span><input type="number" id="preAlertBars" step="1" min="1" value="3"><em>bars</em></label>
 

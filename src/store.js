@@ -19,12 +19,17 @@ function flush() {
   fs.writeFileSync(FILE, JSON.stringify(state, null, 2));
   dirty = false;
 }
+
+// Every writer here is user-driven and infrequent (settings, watchlist, alert
+// log), so write through immediately. Batching only created a window where a
+// restart moments after a change silently lost it. The interval stays as a
+// backstop for anything that mutates state directly.
 setInterval(flush, 3000).unref();
 process.on('exit', flush);
 process.on('SIGINT', () => { flush(); process.exit(0); });
 
 export const get = () => state;
-export const save = () => { dirty = true; };
+export const save = () => { dirty = true; flush(); };
 
 export function addWatch(w) {
   const id = `${w.market}:${w.symbol}:${w.interval}`;
