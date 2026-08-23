@@ -274,10 +274,8 @@ main{max-width:1400px;margin:0 auto;padding:0 16px}
 .lvbox span{font-size:9px;text-transform:uppercase;letter-spacing:.05em;color:var(--dim)}
 .lvbox b{font-size:14px;font-variant-numeric:tabular-nums}
 .lvbox em{font-size:9px;font-style:normal;color:var(--faint)}
-.lvbox.max b{color:var(--dim)}
-.lvbox.max.danger{border-color:rgba(255,84,112,.3)}
-.lvbox.max.danger em{color:var(--down)}
-.lvbox.max.safe{border-color:rgba(38,208,124,.3)}
-.lvbox.max.safe b{color:var(--up)} .lvbox.max.safe em{color:var(--up)}
+.lvbox.max{border-color:rgba(38,208,124,.3)}
+.lvbox.max b{color:var(--up)}
+.lvbox.max em{color:var(--faint)}
 .lvbox.rec{border-color:rgba(38,208,124,.35);background:rgba(38,208,124,.06)}
 .lvbox.rec b{color:var(--up)}

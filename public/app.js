@@ -317,6 +317,7 @@ $('#bestClose').onclick = () => $('#bestModal').classList.add('hidden');
 $('#bestModal').onclick = e => { if (e.target.id === 'bestModal') $('#bestModal').classList.add('hidden'); };
 $('#bestCoins').onchange = loadBest;
 $('#bestMode').onchange = () => renderBest(lastBest);
+$('#bestSort').onchange = () => renderBest(lastBest);
 $('#bestRefresh').onclick = loadBest;
 
 let lastBest = null;
@@ -332,12 +333,25 @@ async function loadBest() {
   }
 }
 
+const SORT_KEYS = {
+  raw: [r => r.totalPct, 'percent of price captured'],
+  rec: [r => r.pctAtUsable, 'return at the recommended leverage'],
+  max: [r => r.totalPct * (r.maxLev || 1), 'return at MEXC max leverage']
+};
+
 function renderBest(d) {
   if (!d) return;
-  const rows = $('#bestMode').value === 'best' ? d.bestPerCoin : d.rows;
+  const [keyFn, label] = SORT_KEYS[$('#bestSort').value] || SORT_KEYS.rec;
+  // Re-pick the best timeframe per coin using the chosen metric, not the
+  // server's default ranking — otherwise sorting reorders the wrong shortlist.
+  let rows = [...d.rows].sort((a, b) => keyFn(b) - keyFn(a));
+  if ($('#bestMode').value === 'best') {
+    const seen = new Set();
+    rows = rows.filter(r => (seen.has(r.symbol) ? false : seen.add(r.symbol)));
+  }
   $('#bestMeta').innerHTML =
     `tested ${d.scanned} coin/timeframe combos · <b>${d.profitable}</b> profitable · ` +
-    `ranked by percent of price captured`;
+    `sorted by ${label}`;
   const box = $('#bestRows');
   box.innerHTML = '';
   if (!rows.length) { box.innerHTML = '<div class="hempty">Nothing profitable in this scan.</div>'; return; }
@@ -358,10 +372,10 @@ function renderBest(d) {
       </div>
       <div class="b3"><span>1D ${r.vol1d?.toFixed(0)}% · 1H ${r.vol1h?.toFixed(1)}%</span></div>
       <div class="blevs">
-        <div class="lvbox max ${r.maxLev > r.usableLev ? 'danger' : 'safe'}">
+        <div class="lvbox max">
           <span>MEXC max ${r.maxLev ?? '—'}x</span>
           <b>+${(r.totalPct * (r.maxLev || 1)).toFixed(0)}%</b>
-          ${r.maxLev > r.usableLev ? '<em>liquidates before the stop</em>' : '<em>stop survives ✓</em>'}
+          <em>${r.maxLev > r.usableLev ? `needs ≤${r.usableLev}x to survive the stop` : 'stop survives ✓'}</em>
         </div>
         <div class="lvbox rec">
           <span>Recommended ${r.usableLev}x</span>
