@@ -72,6 +72,21 @@
     <label class="row"><span>Pre-alert distance</span><input type="number" id="preAlertPct" step="0.05" min="0.05" value="0.35"><em>%</em></label>
     <label class="row"><span>Pre-alert lead</span><input type="number" id="preAlertBars" step="1" min="1" value="3"><em>bars</em></label>
 
+    <h4>Take profit</h4>
+    <label class="row"><span>TP source</span>
+      <select id="c_tpMode" style="padding:7px 9px;border-radius:8px;border:1px solid var(--line);background:var(--panel2)">
+        <option value="profile">Volume profile (shelves)</option>
+        <option value="rr">Fixed R multiple</option>
+      </select></label>
+    <div class="gridcfg">
+      <label>Profile lookback (bars)<input type="number" id="c_vpLen" value="150"></label>
+      <label>Profile rows<input type="number" id="c_vpRows" value="30"></label>
+      <label>Value area %<input type="number" id="c_vaPct" value="70"></label>
+      <label>Node threshold (×POC)<input type="number" id="c_hvnThr" step="0.05" value="0.55"></label>
+      <label>Min TP distance (×ATR)<input type="number" id="c_minTpAtr" step="0.1" value="0.8"></label>
+      <label>Breakout fallback (R)<input type="number" id="c_fallbackRR" step="0.1" value="2"></label>
+    </div>
+
     <h4>Indicator (applies to new symbols)</h4>
     <div class="gridcfg">
       <label>Fast EMA<input type="number" id="c_emaFast" value="9"></label>

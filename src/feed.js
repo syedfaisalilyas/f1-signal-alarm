@@ -22,6 +22,36 @@ export class Feed extends EventEmitter {
 
   streamName(w) { return `${w.symbol.toLowerCase()}@kline_${w.interval}`; }
 
+  // Some networks accept a websocket handshake to Binance and then never
+  // deliver frames (fstream is commonly blocked this way). The socket looks
+  // healthy, so watch actual data instead and fall back to REST polling.
+  startWatchdog() {
+    if (this.watchdog) return;
+    this.watchdog = setInterval(() => {
+      const now = Date.now();
+      for (const e of this.watches.values()) {
+        if (e.watch.market === 'forex' || e.loading) continue;
+        // Binance pushes kline updates every second or two on any active symbol,
+        // whatever the timeframe — so this is a liveness timeout, not a candle
+        // duration. Capped so a 5m watch doesn't sit frozen for six minutes.
+        const limit = Math.min(120000, Math.max(75000, intervalMin(e.watch.interval) * 60000 * 1.2));
+        const silent = now - (e.lastTickAt || 0) > limit;
+        if (silent && !e.pollTimer) {
+          e.streamDead = true;
+          this.startPoll(e);
+          this.emit('status', e.watch.market, 'stream silent — polling');
+          console.log(`[feed] ${e.watch.id}: no stream data in ${Math.round(limit / 1000)}s, falling back to REST polling`);
+        } else if (!silent && e.streamDead && e.pollTimer) {
+          clearInterval(e.pollTimer);
+          e.pollTimer = null;
+          e.streamDead = false;
+          console.log(`[feed] ${e.watch.id}: stream recovered, polling stopped`);
+        }
+      }
+    }, 20000);
+    this.watchdog.unref?.();
+  }
+
   async add(watch) {
     if (this.watches.has(watch.id)) return this.watches.get(watch.id);
     const entry = { watch, candles: [], last: null, marks: {}, error: null, loading: true };
@@ -42,6 +72,7 @@ export class Feed extends EventEmitter {
       entry.loading = false;
       this.emit('error', watch.id, e.message);
     }
+    entry.lastTickAt = Date.now();
     if (watch.market === 'forex') this.startPoll(entry);
     else this.syncSockets();
     return entry;
@@ -123,6 +154,7 @@ export class Feed extends EventEmitter {
   }
 
   pushBar(e, bar) {
+    e.lastTickAt = Date.now();
     const arr = e.candles;
     const last = arr[arr.length - 1];
     let closedNow = false;
@@ -138,15 +170,22 @@ export class Feed extends EventEmitter {
     this.run(e, closedNow);
   }
 
-  // ── polling path (forex) ──
+  // ── polling path: forex always, and any stream that goes silent ──
   startPoll(e) {
-    const ms = Math.max(30000, intervalMin(e.watch.interval) * 60000 / 3);
+    if (e.pollTimer) return;
+    // Binance klines cost weight 2 against a 6000/min budget, so poll hard —
+    // a 3m alarm can't afford a 60s blind spot. Twelve Data's free tier only
+    // allows 8 req/min, so forex stays slow.
+    const ms = e.watch.market === 'forex'
+      ? Math.max(30000, intervalMin(e.watch.interval) * 60000 / 3)
+      : 12000;
     e.pollTimer = setInterval(async () => {
       try {
         const fresh = await fetchCandles(e.watch.market, e.watch.symbol, e.watch.interval, MAX_BARS);
         const prevLastClosed = e.candles.filter(c => c.closed).at(-1)?.t;
         e.candles = fresh;
         e.error = null;
+        e.lastPollAt = Date.now();
         const nowLastClosed = fresh.filter(c => c.closed).at(-1)?.t;
         this.run(e, prevLastClosed !== nowLastClosed);
       } catch (err) {
@@ -205,6 +244,7 @@ export class Feed extends EventEmitter {
     return [...this.watches.values()].map(e => ({
       ...e.watch,
       loading: e.loading, error: e.error,
+      source: e.watch.market === 'forex' ? 'poll' : e.streamDead ? 'poll (stream blocked)' : 'stream',
       analysis: e.last ? slim(e.last) : null
     }));
   }
@@ -214,7 +254,7 @@ function slim(a) {
   return {
     price: a.price, rsi: a.rsi, atrPct: a.atrPct, volRatio: a.volRatio,
     emaFast: a.emaFast, emaSlow: a.emaSlow, macdHist: a.macdHist,
-    position: a.position, forecast: a.forecast, stats: a.stats,
+    position: a.position, forecast: a.forecast, profile: a.profile, stats: a.stats,
     recent: a.trades.slice(-8).reverse(),
     lastClosedTime: a.lastClosedTime
   };

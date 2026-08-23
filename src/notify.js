@@ -78,6 +78,8 @@ export function buildMessage(kind, w, a) {
       `TP1    ${fmt(p.tp1)}  (+${(Math.abs(p.tp1 - p.entryPrice) / p.entryPrice * 100).toFixed(2)}%)\n` +
       `TP2    ${fmt(p.tp2)}  (+${(Math.abs(p.tp2 - p.entryPrice) / p.entryPrice * 100).toFixed(2)}%)\n` +
       `SL     ${fmt(p.sl)}  (-${p.riskPct.toFixed(2)}%)\n` +
+      (p.tpSource ? `target ${p.tpSource}\n` : '') +
+      (a.profile ? `POC ${fmt(a.profile.poc)} · VA ${fmt(a.profile.val)}-${fmt(a.profile.vah)}\n` : '') +
       `RSI ${a.rsi.toFixed(1)} · ATR ${a.atrPct.toFixed(2)}% · Vol ${a.volRatio.toFixed(2)}x` +
       (p.volConfirmed ? ' ✅' : '');
     return {

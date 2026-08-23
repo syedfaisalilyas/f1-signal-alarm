@@ -87,7 +87,7 @@ feed.on('signal', async (kind, watch, a) => {
 function slimForUi(a) {
   return {
     price: a.price, rsi: a.rsi, atrPct: a.atrPct, volRatio: a.volRatio,
-    macdHist: a.macdHist, position: a.position, forecast: a.forecast,
+    macdHist: a.macdHist, position: a.position, forecast: a.forecast, profile: a.profile,
     stats: a.stats, recent: a.trades.slice(-8).reverse(), lastClosedTime: a.lastClosedTime
   };
 }
@@ -169,5 +169,6 @@ server.listen(PORT, async () => {
   console.log(`  access: ${APP_KEY ? 'password protected' : 'OPEN (set APP_PASSWORD before exposing publicly)'}\n`);
   const watches = store.get().watches;
   for (const w of watches) await feed.add(w);
+  feed.startWatchdog();
   if (watches.length) console.log(`  restored ${watches.length} watch(es)\n`);
 });

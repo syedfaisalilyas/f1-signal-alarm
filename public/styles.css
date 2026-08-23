@@ -149,3 +149,18 @@ main{max-width:1400px;margin:0 auto;padding:0 16px}
 .ch{display:flex;justify-content:space-between;align-items:center;padding:10px 12px;border-radius:10px;background:var(--panel2);font-size:13px}
 .ch .st{font-size:11px;font-weight:600}
 .hint{font-size:12px;color:var(--faint);margin-top:12px;line-height:1.6}
+
+/* ── volume profile strip ── */
+.tpsrc{font-size:11px;color:var(--dim);margin:-4px 0 6px}
+.tpsrc b{color:var(--info);font-weight:600}
+.vp{margin:10px 0 4px}
+.vpbar{position:relative;height:16px;border-radius:5px;background:var(--panel2);overflow:hidden}
+.vpbar i{position:absolute;top:0;bottom:0;display:block}
+.vpva{background:rgba(74,168,255,.16);border-left:1px solid rgba(74,168,255,.5);border-right:1px solid rgba(74,168,255,.5)}
+.vpnode{width:2px;background:rgba(74,168,255,.75);margin-left:-1px}
+.vppoc{width:2px;background:var(--warn);margin-left:-1px;box-shadow:0 0 6px var(--warn)}
+.vptp{width:2px;background:var(--up);margin-left:-1px}
+.vpsl{width:2px;background:var(--down);margin-left:-1px}
+.vpnow{width:0;margin-left:-4px;border-left:4px solid transparent;border-right:4px solid transparent;border-top:7px solid var(--fg);height:0;top:auto;bottom:0}
+.vplbl{display:flex;justify-content:space-between;font-size:10px;color:var(--faint);margin-top:3px;font-variant-numeric:tabular-nums}
+.vplbl .poc{color:var(--warn)}

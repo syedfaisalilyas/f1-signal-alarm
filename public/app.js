@@ -185,6 +185,7 @@ function buildCard(w) {
       <div class="lv tp" style="opacity:.75"><span>TP1${p.tp1Done ? ' ✓ hit' : ''}</span><span>${fmtPx(p.tp1)}</span></div>
       <div class="lv en"><span>Entry</span><span>${fmtPx(p.entryPrice)}</span></div>
       <div class="lv sl"><span>SL${p.tp1Done ? ' → BE' : ''}</span><span>${fmtPx(p.sl)}</span></div>`);
+    if (p.tpSource) card.appendChild(el('div', 'tpsrc', `target from <b>${p.tpSource}</b>`));
     card.appendChild(lvls);
     const meter = el('div', 'meter');
     const bar = el('i');
@@ -217,11 +218,53 @@ function buildCard(w) {
       + `<span class="chip">ready ${f.readiness}%</span>`));
   }
 
+  if (a.profile) card.appendChild(vaStrip(a.profile, a.price, p));
+
   card.appendChild(el('div', 'cfoot', `
     <span>RSI ${a.rsi?.toFixed(1) ?? '—'} · ATR ${a.atrPct?.toFixed(2) ?? '—'}% · Vol ${a.volRatio?.toFixed(2) ?? '—'}x</span>
     <span>${a.stats.trades}t · ${a.stats.winRate.toFixed(0)}% · ${a.stats.totalR >= 0 ? '+' : ''}${a.stats.totalR.toFixed(1)}R</span>`));
 
   return card;
+}
+
+// Value-area strip: where price sits inside the volume profile, with the
+// shelves that TP levels are drawn from marked on it.
+function vaStrip(prof, price, pos) {
+  const lo = Math.min(prof.lo, price), hi = Math.max(prof.hi, price);
+  const span = hi - lo || 1;
+  const at = v => Math.max(0, Math.min(100, ((v - lo) / span) * 100));
+  const wrap = el('div', 'vp');
+  const bar = el('div', 'vpbar');
+
+  const va = el('i', 'vpva');
+  va.style.left = at(prof.val) + '%';
+  va.style.width = Math.max(1, at(prof.vah) - at(prof.val)) + '%';
+  bar.appendChild(va);
+
+  for (const n of prof.nodes) {
+    const t = el('i', 'vpnode');
+    t.style.left = at(n) + '%';
+    bar.appendChild(t);
+  }
+  const pocEl = el('i', 'vppoc');
+  pocEl.style.left = at(prof.poc) + '%';
+  bar.appendChild(pocEl);
+
+  if (pos) {
+    for (const [lvl, cls] of [[pos.tp1, 'vptp'], [pos.tp2, 'vptp'], [pos.sl, 'vpsl']]) {
+      const m = el('i', cls);
+      m.style.left = at(lvl) + '%';
+      bar.appendChild(m);
+    }
+  }
+  const now = el('i', 'vpnow');
+  now.style.left = at(price) + '%';
+  bar.appendChild(now);
+
+  wrap.appendChild(bar);
+  wrap.appendChild(el('div', 'vplbl',
+    `<span>VAL ${fmtPx(prof.val)}</span><span class="poc">POC ${fmtPx(prof.poc)}</span><span>VAH ${fmtPx(prof.vah)}</span>`));
+  return wrap;
 }
 
 // ─────────── alerts in-page ───────────
@@ -338,6 +381,8 @@ function collectIndicatorCfg() {
     rsiLen: num('rsiLen'), rsiOB: num('rsiOB'), rsiOS: num('rsiOS'),
     atrLen: num('atrLen'), rr1: num('rr1'), rr2: num('rr2'),
     slMode: $('#c_slMode').value, slLookback: num('slLookback'), slBuf: num('slBuf'),
+    tpMode: $('#c_tpMode').value, vpLen: num('vpLen'), vpRows: num('vpRows'),
+    vaPct: num('vaPct'), hvnThr: num('hvnThr'), minTpAtr: num('minTpAtr'), fallbackRR: num('fallbackRR'),
     maxBars: num('maxBars'), requireVol: bool('requireVol'), useTrend: bool('useTrend'),
     useRevExit: bool('useRevExit'), beAfterTp1: bool('beAfterTp1'),
     preAlertPct: Number($('#preAlertPct').value), preAlertBars: Number($('#preAlertBars').value)
@@ -347,7 +392,9 @@ function applySettingsToForm() {
   const s = { ...state.defaults, ...(state.settings.cfg || {}) };
   const set = (id, v) => { const n = $('#c_' + id); if (n) { if (n.type === 'checkbox') n.checked = !!v; else n.value = v; } };
   ['emaFast', 'emaSlow', 'rsiLen', 'rsiOB', 'rsiOS', 'atrLen', 'rr1', 'rr2', 'slLookback', 'slBuf', 'maxBars',
-    'requireVol', 'useTrend', 'useRevExit', 'beAfterTp1'].forEach(k => set(k, s[k]));
+    'requireVol', 'useTrend', 'useRevExit', 'beAfterTp1', 'vpLen', 'vpRows', 'vaPct', 'hvnThr',
+    'minTpAtr', 'fallbackRR'].forEach(k => set(k, s[k]));
+  $('#c_tpMode').value = s.tpMode;
   $('#c_slMode').value = s.slMode;
   $('#preAlertPct').value = s.preAlertPct;
   $('#preAlertBars').value = s.preAlertBars;

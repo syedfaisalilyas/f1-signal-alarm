@@ -2,6 +2,7 @@
 // Walks every bar exactly like Pine so state/TP/SL match the chart.
 
 import { ema, sma, rsi, macd, atr, lowest, highest, emaNext, crossPrice } from './indicators.js';
+import { VP_DEFAULTS, buildProfile, pickTargets, atNode } from './volumeprofile.js';
 
 export const DEFAULTS = {
   emaFast: 9, emaSlow: 21,
@@ -14,7 +15,8 @@ export const DEFAULTS = {
   slBuf: 0.25, minRiskAtr: 0.35, rr1: 1.0, rr2: 2.0,
   useRevExit: true, revOnlyInProfit: true, beAfterTp1: true, maxBars: 40,
   preAlertPct: 0.35,        // warn when price is this % from the trigger
-  preAlertBars: 3           // ...or when the cross is this many bars away
+  preAlertBars: 3,          // ...or when the cross is this many bars away
+  ...VP_DEFAULTS            // tpMode, vpLen, vpRows, vaPct, hvnThr, minTpAtr, fallbackRR
 };
 
 export function analyze(candles, userCfg = {}) {
@@ -67,10 +69,20 @@ export function analyze(candles, userCfg = {}) {
   const bearRev = i => star(i) || bearEng(i) || macdXdn(i) || (r[i] > cfg.rsiOB && close[i] < open[i]) || crossDn(i);
   const bullRev = i => hammer(i) || bullEng(i) || macdXup(i) || (r[i] < cfg.rsiOS && close[i] > open[i]) || crossUp(i);
 
+  // A momentum flip (EMA/MACD cross) always counts. A lone candle pattern only
+  // counts when it lands on a volume shelf — otherwise it's noise.
+  const momentumFlip = (i, dir) => dir === 1 ? (macdXdn(i) || crossDn(i)) : (macdXup(i) || crossUp(i));
+  const onShelf = (i, dir) => atNode(entryProf, dir === 1 ? high[i] : low[i], a[i] * 0.6);
+  const revConfirmed = (i, dir) =>
+    cfg.tpMode !== 'profile' || momentumFlip(i, dir) || onShelf(i, dir);
+  const revTag = (i, dir) =>
+    (cfg.tpMode === 'profile' && !momentumFlip(i, dir) && onShelf(i, dir)) ? 'TP REVERSAL @ NODE' : 'TP REVERSAL';
+
   // ── state machine over closed bars ──
   const lastClosed = candles[n - 1].closed ? n - 1 : n - 2;
   let pos = 0, entryP = null, slP = null, slInit = null, tp1P = null, tp2P = null;
   let entryBar = null, tp1Done = false, lastExit = -9999;
+  let entryProf = null;
   const trades = [];
   let openTrade = null;
 
@@ -84,7 +96,7 @@ export function analyze(candles, userCfg = {}) {
       else {
         if (!tp1Done && high[i] >= tp1P) { tp1Done = true; if (cfg.beAfterTp1) slP = entryP; }
         if (i > entryBar) {
-          if (cfg.useRevExit && bearRev(i) && (!cfg.revOnlyInProfit || close[i] > entryP)) { exitPx = close[i]; exitTag = 'TP REVERSAL'; flip = shortSig(i); }
+          if (cfg.useRevExit && bearRev(i) && revConfirmed(i, 1) && (!cfg.revOnlyInProfit || close[i] > entryP)) { exitPx = close[i]; exitTag = revTag(i, 1); flip = shortSig(i); }
           else if (shortSig(i)) { exitPx = close[i]; exitTag = 'FLIP'; flip = true; }
           else if (cfg.maxBars > 0 && i - entryBar >= cfg.maxBars) { exitPx = close[i]; exitTag = 'TIME'; }
         }
@@ -95,7 +107,7 @@ export function analyze(candles, userCfg = {}) {
       else {
         if (!tp1Done && low[i] <= tp1P) { tp1Done = true; if (cfg.beAfterTp1) slP = entryP; }
         if (i > entryBar) {
-          if (cfg.useRevExit && bullRev(i) && (!cfg.revOnlyInProfit || close[i] < entryP)) { exitPx = close[i]; exitTag = 'TP REVERSAL'; flip = longSig(i); }
+          if (cfg.useRevExit && bullRev(i) && revConfirmed(i, -1) && (!cfg.revOnlyInProfit || close[i] < entryP)) { exitPx = close[i]; exitTag = revTag(i, -1); flip = longSig(i); }
           else if (longSig(i)) { exitPx = close[i]; exitTag = 'FLIP'; flip = true; }
           else if (cfg.maxBars > 0 && i - entryBar >= cfg.maxBars) { exitPx = close[i]; exitTag = 'TIME'; }
         }
@@ -124,13 +136,29 @@ export function analyze(candles, userCfg = {}) {
       const risk = Math.max(dir === 1 ? entryP - raw : raw - entryP, a[i] * cfg.minRiskAtr);
       slP = dir === 1 ? entryP - risk : entryP + risk;
       slInit = slP;
-      tp1P = dir === 1 ? entryP + risk * cfg.rr1 : entryP - risk * cfg.rr1;
-      tp2P = dir === 1 ? entryP + risk * cfg.rr2 : entryP - risk * cfg.rr2;
+
+      // Targets off the volume profile: the next two shelves ahead of entry.
+      // The profile is built once, at entry, and kept for the life of the trade —
+      // levels you mark going in are the levels you trade against.
+      let tpSource;
+      if (cfg.tpMode === 'profile') {
+        entryProf = buildProfile(candles, i, cfg);
+        const t = pickTargets(entryProf, entryP, dir, a[i] * cfg.minTpAtr, risk, cfg.fallbackRR);
+        tp1P = t.tp1; tp2P = t.tp2; tpSource = t.source;
+      } else {
+        entryProf = null;
+        tp1P = dir === 1 ? entryP + risk * cfg.rr1 : entryP - risk * cfg.rr1;
+        tp2P = dir === 1 ? entryP + risk * cfg.rr2 : entryP - risk * cfg.rr2;
+        tpSource = `${cfg.rr1}R \u2192 ${cfg.rr2}R`;
+      }
+
       pos = dir; entryBar = i; tp1Done = false;
       openTrade = {
         side: dir === 1 ? 'LONG' : 'SHORT', entryBar: i, entryTime: candles[i].t,
-        entryPrice: entryP, sl: slP, tp1: tp1P, tp2: tp2P,
-        riskPct: (risk / entryP) * 100, volConfirmed: volSpike(i)
+        entryPrice: entryP, sl: slP, tp1: tp1P, tp2: tp2P, tpSource,
+        riskPct: (risk / entryP) * 100, volConfirmed: volSpike(i),
+        tp1Pct: (Math.abs(tp1P - entryP) / entryP) * 100,
+        tp2Pct: (Math.abs(tp2P - entryP) / entryP) * 100
       };
     }
   }
@@ -152,8 +180,17 @@ export function analyze(candles, userCfg = {}) {
     avgR: trades.length ? trades.reduce((s, t) => s + t.r, 0) / trades.length : 0
   };
 
+  const liveProf = cfg.tpMode === 'profile' ? buildProfile(candles, li, cfg) : null;
+
   return {
     price: px,
+    profile: liveProf && {
+      poc: liveProf.poc, vah: liveProf.vah, val: liveProf.val,
+      hi: liveProf.hi, lo: liveProf.lo,
+      nodes: liveProf.nodes,
+      rows: liveProf.rows.map(x => ({ p: x.price, s: x.share, va: x.inVA, h: x.isHVN, poc: x.isPOC })),
+      atNode: atNode(liveProf, px, a[li] * 0.6)
+    },
     atr: a[li], atrPct: atrPct(li), rsi: r[li],
     emaFast: eF[li], emaSlow: eS[li], emaTrend: eT[li],
     macdLine: m.line[li], macdSignal: m.signal[li], macdHist: m.hist[li],

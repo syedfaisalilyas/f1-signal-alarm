@@ -301,6 +301,14 @@ if pos == 0 and (longBase or shortBase)
         tp2P := dir == 1 ? entryP + risk * fallbackRR : entryP - risk * fallbackRR
         tpSource := "breakout · " + str.tostring(fallbackRR, "#.#") + "R"
 
+    // A distant shelf can sit beyond the R fallback, which would leave TP2 nearer
+    // than TP1. The nearer level is always TP1 — swap rather than emit garbage.
+    if (dir == 1 and tp2P < tp1P) or (dir == -1 and tp2P > tp1P)
+        float tmpTp = tp1P
+        tp1P := tp2P
+        tp2P := tmpTp
+        tpSource := tpSource + " (swapped)"
+
     pos := dir
     entryBarIx := bar_index
     tp1Done := false
