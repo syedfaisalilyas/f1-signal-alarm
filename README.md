@@ -26,12 +26,17 @@ To use it from your phone on the same Wi-Fi, find your Mac's LAN IP
 Pick **one**. Telegram is the easiest and the most reliable.
 
 ### 1. Telegram (recommended)
-1. Open Telegram, message **@BotFather**, send `/newbot`, follow the prompts.
-2. Copy the token it gives you → `TELEGRAM_TOKEN` in `.env`.
-3. Send any message to your new bot (this opens the chat).
-4. Visit `https://api.telegram.org/bot<YOUR_TOKEN>/getUpdates` and copy
-   `message.chat.id` → `TELEGRAM_CHAT_ID` in `.env`.
-5. Restart, hit **Test** in the header.
+```bash
+npm run telegram
+```
+Walks you through it. You only do the part that needs your Telegram account:
+
+1. Message **@BotFather**, send `/newbot`, pick a name and a username ending in `bot`.
+2. Paste the token it gives you into the script.
+
+The script then validates the token, waits for you to press START in the bot chat,
+auto-discovers your chat id, writes both values into `.env`, and sends a test message.
+No hunting through `getUpdates` JSON.
 
 ### 2. ntfy (loudest — real alarm behaviour)
 1. Install the **ntfy** app (iOS / Android).

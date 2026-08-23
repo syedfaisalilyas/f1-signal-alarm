@@ -6,12 +6,15 @@
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
-    "keys": "node -e \"import('web-push').then(w=>{const k=w.default.generateVAPIDKeys();console.log('VAPID_PUBLIC='+k.publicKey);console.log('VAPID_PRIVATE='+k.privateKey)})\""
+    "keys": "node -e \"import('web-push').then(w=>{const k=w.default.generateVAPIDKeys();console.log('VAPID_PUBLIC='+k.publicKey);console.log('VAPID_PRIVATE='+k.privateKey)})\"",
+    "telegram": "node setup-telegram.js"
   },
   "dependencies": {
     "express": "^4.19.2",
     "web-push": "^3.6.7",
     "ws": "^8.18.0"
   },
-  "engines": { "node": ">=18" }
+  "engines": {
+    "node": ">=18"
+  }
 }
