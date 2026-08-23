@@ -316,7 +316,7 @@ server.listen(PORT, async () => {
 
   setOverrides(store.get().settings.levOverride || {});
   await refreshLeverage();
-  console.log(`  leverage: ${levLoaded()} symbols via ${levSourceName()}`);
+  console.log(`  leverage: ${levLoaded()} contracts via ${levSourceName()}`);
   setInterval(refreshLeverage, 12 * 60 * 60 * 1000).unref();
 
   const watches = store.get().watches;
