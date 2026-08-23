@@ -1,0 +1,71 @@
+{
+  "watches": [
+    {
+      "id": "futures:TUTUSDT:3m",
+      "enabled": true,
+      "cfg": {},
+      "addedAt": 1787504772866,
+      "market": "futures",
+      "symbol": "TUTUSDT",
+      "interval": "3m"
+    },
+    {
+      "id": "futures:TUTUSDT:5m",
+      "enabled": true,
+      "cfg": {},
+      "addedAt": 1787504779448,
+      "market": "futures",
+      "symbol": "TUTUSDT",
+      "interval": "5m"
+    },
+    {
+      "id": "futures:TUTUSDT:1m",
+      "enabled": true,
+      "cfg": {},
+      "addedAt": 1787504955105,
+      "market": "futures",
+      "symbol": "TUTUSDT",
+      "interval": "1m"
+    },
+    {
+      "id": "futures:SPKUSDT:5m",
+      "enabled": true,
+      "cfg": {},
+      "addedAt": 1787517653622,
+      "market": "futures",
+      "symbol": "SPKUSDT",
+      "interval": "5m"
+    }
+  ],
+  "settings": {
+    "muted": false,
+    "lowVolAlerts": true,
+    "lowVol1h": 1,
+    "levOverride": {}
+  },
+  "marks": {
+    "futures:TUTUSDT:3m": {
+      "entryTime": null,
+      "exitTime": 1787509620000,
+      "seen": true
+    },
+    "futures:TUTUSDT:5m": {
+      "entryTime": null,
+      "exitTime": 1787518500000,
+      "seen": true
+    },
+    "futures:TUTUSDT:1m": {
+      "entryTime": null,
+      "exitTime": 1787502900000,
+      "seen": true
+    },
+    "futures:SPKUSDT:5m": {
+      "entryTime": 1787517900000,
+      "preAlertAt": 0,
+      "exitTime": 1787474700000,
+      "seen": true
+    }
+  },
+  "log": [],
+  "lastRun": 1787518845742
+}

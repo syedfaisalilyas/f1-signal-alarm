@@ -1,8 +1,24 @@
 // Market data. Crypto = Binance (no API key). Forex = Twelve Data (free key).
 
+import { SPOT_MIRROR, isGeoBlocked, mexcCandles, mexcTicker, mexcPerps, mexcFactor } from './geofeed.js';
+
 const SPOT = 'https://api.binance.com/api/v3';
 const FUT = 'https://fapi.binance.com/fapi/v1';
 const TD = 'https://api.twelvedata.com';
+
+// Binance answers 451 from restricted regions rather than failing outright, so
+// the first blocked call switches the source for the rest of the process.
+let spotBase = SPOT;
+let futuresViaMexc = false;
+
+function fellBack(what, to) {
+  console.warn(`[providers] Binance returned 451 for ${what} — using ${to}`);
+}
+
+export const feedSources = () => ({
+  spot: spotBase === SPOT ? 'binance' : 'binance-vision',
+  futures: futuresViaMexc ? 'mexc' : 'binance'
+});
 
 export const WS_URL = {
   spot: 'wss://stream.binance.com:9443/stream',
@@ -21,9 +37,23 @@ async function jget(url) {
 export async function listSymbols(market) {
   if (cache.symbols[market] && Date.now() - cache.at[market] < TTL) return cache.symbols[market];
   let out = [];
+  if (market === 'futures' && futuresViaMexc) {
+    out = await mexcPerps();
+    cache.symbols[market] = out;
+    cache.at[market] = Date.now();
+    return out;
+  }
   if (market === 'spot' || market === 'futures') {
-    const base = market === 'spot' ? SPOT : FUT;
-    const info = await jget(`${base}/exchangeInfo`);
+    const base = market === 'spot' ? spotBase : FUT;
+    let info;
+    try {
+      info = await jget(`${base}/exchangeInfo`);
+    } catch (e) {
+      if (!isGeoBlocked(e)) throw e;
+      if (market === 'futures') { futuresViaMexc = true; fellBack('perp symbols', 'MEXC'); return listSymbols(market); }
+      if (spotBase === SPOT) { spotBase = SPOT_MIRROR; fellBack('spot symbols', 'data-api.binance.vision'); return listSymbols(market); }
+      throw e;
+    }
     out = info.symbols
       .filter(s => s.status === 'TRADING' && (market === 'futures' ? s.contractType === 'PERPETUAL' : true))
       .map(s => ({
@@ -70,12 +100,35 @@ const TD_INTERVAL = { '1m': '1min', '3m': '1min', '5m': '5min', '15m': '15min', 
 
 export async function fetchCandles(market, symbol, interval, limit = 500) {
   if (market === 'forex') return fetchForex(symbol, interval, limit);
-  const base = market === 'futures' ? FUT : SPOT;
-  const raw = await jget(`${base}/klines?symbol=${symbol}&interval=${interval}&limit=${limit}`);
-  return raw.map(k => ({
-    t: k[0], o: +k[1], h: +k[2], l: +k[3], c: +k[4], v: +k[5],
-    closeTime: k[6], closed: k[6] < Date.now()
-  }));
+  if (market === 'futures' && futuresViaMexc) return perpCandles(symbol, interval, limit);
+  const base = market === 'futures' ? FUT : spotBase;
+  try {
+    const raw = await jget(`${base}/klines?symbol=${symbol}&interval=${interval}&limit=${limit}`);
+    return raw.map(k => ({
+      t: k[0], o: +k[1], h: +k[2], l: +k[3], c: +k[4], v: +k[5],
+      closeTime: k[6], closed: k[6] < Date.now()
+    }));
+  } catch (e) {
+    if (!isGeoBlocked(e)) throw e;
+    if (market === 'futures') {
+      futuresViaMexc = true;
+      fellBack('perp candles', 'MEXC');
+      return perpCandles(symbol, interval, limit);
+    }
+    if (spotBase === SPOT) {
+      spotBase = SPOT_MIRROR;
+      fellBack('spot candles', 'data-api.binance.vision');
+      return fetchCandles(market, symbol, interval, limit);
+    }
+    throw e;
+  }
+}
+
+// MEXC has no 3m contract candle, so it arrives as 1m and gets rolled up here.
+async function perpCandles(symbol, interval, limit) {
+  const factor = mexcFactor(interval);
+  const bars = await mexcCandles(symbol, interval, limit);
+  return factor > 1 ? aggregate(bars, factor) : bars;
 }
 
 async function fetchForex(symbol, interval, limit) {
@@ -116,7 +169,10 @@ export function aggregate(bars, n) {
 // the trade log can go past what the live window holds.
 export async function fetchCandlesDeep(market, symbol, interval, bars = 3000) {
   if (market === 'forex') return fetchCandles(market, symbol, interval, Math.min(bars, 5000));
-  const base = market === 'futures' ? FUT : SPOT;
+  // The mirror and MEXC both cap a single response well below Binance's paging,
+  // so a blocked region just gets the shallower window instead of nothing.
+  if (market === 'futures' && futuresViaMexc) return fetchCandles(market, symbol, interval, Math.min(bars, 2000));
+  const base = market === 'futures' ? FUT : spotBase;
   const out = [];
   let endTime = Date.now();
   for (let page = 0; page < 6 && out.length < bars; page++) {
@@ -136,7 +192,15 @@ export async function fetchCandlesDeep(market, symbol, interval, bars = 3000) {
 }
 
 export async function ticker24h(market, symbol) {
-  const base = market === 'futures' ? FUT : SPOT;
-  const d = await jget(`${base}/ticker/24hr?symbol=${symbol}`);
-  return { price: +d.lastPrice, changePct: +d.priceChangePercent, volume: +d.quoteVolume };
+  if (market === 'futures' && futuresViaMexc) return mexcTicker(symbol);
+  const base = market === 'futures' ? FUT : spotBase;
+  try {
+    const d = await jget(`${base}/ticker/24hr?symbol=${symbol}`);
+    return { price: +d.lastPrice, changePct: +d.priceChangePercent, volume: +d.quoteVolume };
+  } catch (e) {
+    if (!isGeoBlocked(e)) throw e;
+    if (market === 'futures') { futuresViaMexc = true; fellBack('perp ticker', 'MEXC'); return mexcTicker(symbol); }
+    if (spotBase === SPOT) { spotBase = SPOT_MIRROR; fellBack('spot ticker', 'data-api.binance.vision'); return ticker24h(market, symbol); }
+    throw e;
+  }
 }

@@ -1,0 +1,59 @@
+# The scanner, running where your laptop doesn't have to be.
+#
+# Alerts are the point here: signals go to Telegram. Live state is kept on the
+# orphan `state` branch as one force-pushed commit — a scan every 5 minutes
+# would otherwise pile ~288 commits a day onto main.
+name: scan
+
+on:
+  schedule:
+    - cron: '*/5 * * * *'
+  workflow_dispatch:
+
+concurrency:
+  group: scan
+  cancel-in-progress: false
+
+jobs:
+  scan:
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - run: npm ci --omit=dev
+
+      # Previous run's state. git fetch, not raw.githubusercontent — that CDN
+      # caches for ~5 min and stale marks would re-fire alerts already sent.
+      - name: Restore state
+        run: |
+          if git fetch --depth=1 origin state 2>/dev/null; then
+            git show FETCH_HEAD:state.json > cloud/state.json
+            echo "restored state from branch"
+          else
+            echo "no state branch yet — seeding from the committed watchlist"
+          fi
+
+      - name: Scan
+        env:
+          TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          NTFY_TOPIC: ${{ secrets.NTFY_TOPIC }}
+        run: node scan.js
+
+      - name: Publish state
+        run: |
+          pub=$(mktemp -d)
+          cp cloud/state.json cloud/snapshot.json "$pub"/
+          cd "$pub"
+          git init -q -b state
+          git config user.name "f1-alarm bot"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add .
+          git commit -qm "state @ $(date -u +%FT%TZ)"
+          git push -q --force "https://x-access-token:${{ github.token }}@github.com/${{ github.repository }}.git" state
