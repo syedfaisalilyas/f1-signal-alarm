@@ -7,7 +7,7 @@ import { fileURLToPath } from 'url';
 
 import * as store from './src/store.js';
 import { Feed } from './src/feed.js';
-import { searchSymbols, ticker24h, fetchCandlesDeep } from './src/providers.js';
+import { searchSymbols, ticker24h, fetchCandlesDeep, listSymbols } from './src/providers.js';
 import { analyze } from './src/strategy.js';
 import { initPush, channelStatus, buildMessage, dispatch } from './src/notify.js';
 import { DEFAULTS } from './src/strategy.js';
@@ -216,8 +216,31 @@ app.get('/api/volatility', async (req, res) => {
 app.get('/api/volatility/lookup', async (req, res) => {
   try {
     const market = req.query.market === 'spot' ? 'spot' : 'futures';
-    if (!req.query.symbol) return res.status(400).json({ error: 'symbol required' });
-    res.json(await vol.lookup(market, req.query.symbol));
+    const q = (req.query.symbol || '').trim();
+    if (!q) return res.status(400).json({ error: 'symbol required' });
+
+    // Resolve loosely: exact, then +USDT, then the best fuzzy match from the
+    // exchange list. Typing "trump" or fat-fingering "trumpt" should still land
+    // on TRUMPUSDT rather than returning a raw 400.
+    const tries = [q.toUpperCase()];
+    if (!/USDT$|USDC$|\//i.test(q)) tries.push(q.toUpperCase() + 'USDT');
+    for (const sym of tries) {
+      try { return res.json({ ...(await vol.lookup(market, sym)), resolvedFrom: q }); } catch { /* next */ }
+    }
+    const hits = await searchSymbols(q, [market]);
+    let best = hits.find(h => h.quote === 'USDT') || hits[0];
+
+    // Still nothing: the coin name may be a prefix of what was typed
+    // ("trumpt" -> TRUMP). Take the longest base asset the query starts with.
+    if (!best) {
+      const term = q.toUpperCase().replace(/[^A-Z0-9]/g, '');
+      const all = await listSymbols(market).catch(() => []);
+      const cands = all.filter(x => x.quote === 'USDT' && x.base && x.base.length >= 2 && term.startsWith(x.base));
+      cands.sort((a, b) => b.base.length - a.base.length);
+      best = cands[0];
+    }
+    if (!best) return res.status(404).json({ error: `no ${market} symbol matching "${q}"` });
+    res.json({ ...(await vol.lookup(market, best.symbol)), resolvedFrom: q, fuzzy: true });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 

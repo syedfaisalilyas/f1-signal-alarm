@@ -553,10 +553,10 @@ $('#volSearch').addEventListener('input', e => {
   const q = e.target.value.trim().toUpperCase();
   if (!q) { volLookupRow = null; renderVol(); return; }
   volSearchTimer = setTimeout(async () => {
-    const sym = q.endsWith('USDT') || q.includes('/') ? q : q + 'USDT';
     try {
-      const d = await apiJson(`/api/volatility/lookup?market=${$('#volMarket').value}&symbol=${encodeURIComponent(sym)}`);
-      if (d.error) { volLookupRow = null; $('#volFoot').textContent = `${sym}: ${d.error}`; renderVol(); return; }
+      // Send the raw query — the server resolves partials, case and near-misses.
+      const d = await apiJson(`/api/volatility/lookup?market=${$('#volMarket').value}&symbol=${encodeURIComponent(q)}`);
+      if (d.error) { volLookupRow = null; $('#volFoot').textContent = d.error; renderVol(); return; }
       volLookupRow = { ...d, pinned: state.watches.some(w => w.symbol === d.symbol) };
       renderVol();
     } catch { /* keep last good board */ }
