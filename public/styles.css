@@ -226,3 +226,11 @@ main{max-width:1400px;margin:0 auto;padding:0 16px}
 .hr2 .hlev{margin-left:auto;font-size:11px;font-weight:600}
 .hr3{display:flex;justify-content:space-between;gap:10px;font-size:10px;color:var(--faint);margin-top:4px}
 .hempty{color:var(--dim);font-size:13px;text-align:center;padding:22px}
+
+/* ── target badges in history ── */
+.htgts{display:flex;align-items:center;gap:5px;margin-top:6px}
+.tgt{font-size:9px;font-weight:700;letter-spacing:.06em;padding:2px 6px;border-radius:5px;
+  background:var(--panel);color:var(--faint);border:1px solid var(--line)}
+.tgt.on{background:rgba(38,208,124,.15);color:var(--up);border-color:rgba(38,208,124,.35)}
+.tgt.bad{background:rgba(255,84,112,.13);color:var(--down);border-color:rgba(255,84,112,.3)}
+.hpeak{margin-left:auto;font-size:10px;color:var(--warn)}

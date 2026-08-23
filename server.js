@@ -11,7 +11,7 @@ import { searchSymbols, ticker24h } from './src/providers.js';
 import { initPush, channelStatus, buildMessage, dispatch } from './src/notify.js';
 import { DEFAULTS } from './src/strategy.js';
 import { VolatilityScanner } from './src/volatility.js';
-import { refresh as refreshLeverage, loaded as levLoaded } from './src/leverage.js';
+import { refresh as refreshLeverage, loaded as levLoaded, sourceName as levSourceName, setOverrides } from './src/leverage.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const app = express();
@@ -222,6 +222,10 @@ app.get('/api/settings', (_req, res) => res.json(store.get().settings));
 app.post('/api/settings', (req, res) => {
   Object.assign(store.get().settings, req.body || {});
   store.save();
+  if (req.body && 'levOverride' in req.body) {
+    setOverrides(store.get().settings.levOverride || {});
+    broadcast('watches', feed.snapshot());
+  }
   broadcast('settings', store.get().settings);
   res.json(store.get().settings);
 });
@@ -255,8 +259,9 @@ server.listen(PORT, async () => {
   console.log(`  channels: telegram=${ch.telegram ? 'on' : 'off'}  ntfy=${ch.ntfy ? 'on' : 'off'}  webpush=${ch.webpush ? 'on' : 'off'}`);
   console.log(`  forex: ${process.env.TWELVEDATA_KEY ? 'on' : 'off (set TWELVEDATA_KEY)'}`);
   console.log(`  access: ${APP_KEY ? 'password protected' : 'OPEN (set APP_PASSWORD before exposing publicly)'}\n`);
+  setOverrides(store.get().settings.levOverride || {});
   await refreshLeverage();
-  console.log(`  leverage: ${levLoaded()} symbols loaded`);
+  console.log(`  leverage: ${levLoaded()} symbols via ${levSourceName()}`);
   setInterval(refreshLeverage, 12 * 60 * 60 * 1000).unref();
 
   const watches = store.get().watches;

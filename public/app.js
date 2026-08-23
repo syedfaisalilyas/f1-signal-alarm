@@ -324,12 +324,17 @@ function openHistory(id) {
       const good = t.r >= 0;
       const when = new Date(t.exitTime).toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
       const levPnl = lev ? `<span class="hlev ${good ? 'up' : 'down'}">${t.pnlPct >= 0 ? '+' : ''}${(t.pnlPct * lev).toFixed(1)}% @${lev}x</span>` : '';
+      const hit = `<span class="tgt ${t.tp1Hit ? 'on' : ''}">TP1</span><span class="tgt ${t.tp2Hit ? 'on' : ''}">TP2</span>` +
+                  `<span class="tgt ${t.r < 0 ? 'bad' : ''}">SL</span>`;
+      const peak = t.peakR > t.r + 0.05
+        ? `<span class="hpeak">peaked +${t.peakR.toFixed(2)}R · gave back ${t.gaveBack.toFixed(2)}R</span>` : '';
       body.appendChild(el('div', 'hrow ' + (good ? 'win' : 'loss'), `
         <div class="hr1">
           <span class="hside ${t.side === 'LONG' ? 'up' : 'down'}">${t.side === 'LONG' ? '▲' : '▼'} ${t.side}</span>
           <span class="hreason">${t.reason}</span>
           <span class="hr ${good ? 'up' : 'down'}">${good ? '+' : ''}${t.r.toFixed(2)}R</span>
         </div>
+        <div class="htgts">${hit}${peak}</div>
         <div class="hr2">
           <span>${fmtPx(t.entryPrice)} → ${fmtPx(t.exitPrice)}</span>
           <span class="${good ? 'up' : 'down'}">${t.pnlPct >= 0 ? '+' : ''}${t.pnlPct.toFixed(2)}%</span>
@@ -549,6 +554,8 @@ function collectIndicatorCfg() {
     rsiLen: num('rsiLen'), rsiOB: num('rsiOB'), rsiOS: num('rsiOS'),
     atrLen: num('atrLen'), rr1: num('rr1'), rr2: num('rr2'),
     slMode: $('#c_slMode').value, slLookback: num('slLookback'), slBuf: num('slBuf'),
+    beAtR: num('beAtR'), trailAfterR: num('trailAfterR'), trailAtr: num('trailAtr'),
+    useTrail: bool('useTrail'), tp1Portion: num('tp1Portion') / 100,
     tpMode: $('#c_tpMode').value, vpLen: num('vpLen'), vpRows: num('vpRows'),
     vaPct: num('vaPct'), hvnThr: num('hvnThr'), minTpAtr: num('minTpAtr'), fallbackRR: num('fallbackRR'),
     maxBars: num('maxBars'), requireVol: bool('requireVol'), useTrend: bool('useTrend'),
@@ -561,7 +568,10 @@ function applySettingsToForm() {
   const set = (id, v) => { const n = $('#c_' + id); if (n) { if (n.type === 'checkbox') n.checked = !!v; else n.value = v; } };
   ['emaFast', 'emaSlow', 'rsiLen', 'rsiOB', 'rsiOS', 'atrLen', 'rr1', 'rr2', 'slLookback', 'slBuf', 'maxBars',
     'requireVol', 'useTrend', 'useRevExit', 'beAfterTp1', 'vpLen', 'vpRows', 'vaPct', 'hvnThr',
-    'minTpAtr', 'fallbackRR'].forEach(k => set(k, s[k]));
+    'minTpAtr', 'fallbackRR', 'beAtR', 'trailAfterR', 'trailAtr', 'useTrail'].forEach(k => set(k, s[k]));
+  set('tp1Portion', Math.round((s.tp1Portion ?? 0.5) * 100));
+  $('#levOverride').value = Object.entries(state.settings.levOverride || {})
+    .map(([k, v]) => `${k}=${v}`).join(', ');
   $('#c_tpMode').value = s.tpMode;
   $('#c_slMode').value = s.slMode;
   $('#preAlertPct').value = s.preAlertPct;
@@ -577,7 +587,12 @@ $('#saveCfg').onclick = async () => {
     preAlerts: $('#preAlerts').checked,
     exitAlerts: $('#exitAlerts').checked,
     lowVolAlerts: $('#lowVolAlerts').checked,
-    lowVol1h: Number($('#lowVol1h').value)
+    lowVol1h: Number($('#lowVol1h').value),
+    levOverride: Object.fromEntries(($('#levOverride').value || '').split(',')
+      .map(p => p.trim()).filter(Boolean)
+      .map(p => p.split('=').map(x => x.trim()))
+      .filter(([k, v]) => k && Number(v) > 0)
+      .map(([k, v]) => [k.toUpperCase(), Number(v)]))
   });
   $('#modal').classList.add('hidden');
 };

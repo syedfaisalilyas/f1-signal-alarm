@@ -127,6 +127,21 @@
     <label class="row"><span>Pre-alert distance</span><input type="number" id="preAlertPct" step="0.05" min="0.05" value="0.35"><em>%</em></label>
     <label class="row"><span>Pre-alert lead</span><input type="number" id="preAlertBars" step="1" min="1" value="3"><em>bars</em></label>
 
+    <h4>Leverage</h4>
+    <label class="row" style="align-items:flex-start"><span>Max-leverage overrides<br>
+      <span class="dim" style="font-size:11px">Binance's public feed lags new listings. e.g. <code>TUTUSDT=100, TACUSDT=75</code></span></span></label>
+    <input type="text" id="levOverride" placeholder="TUTUSDT=100, TACUSDT=75"
+      style="width:100%;padding:9px 11px;border-radius:9px;border:1px solid var(--line);background:var(--panel2);color:var(--fg);margin-top:6px">
+
+    <h4>Trailing stop</h4>
+    <div class="gridcfg">
+      <label>Breakeven at (R)<input type="number" id="c_beAtR" step="0.1" value="1.0"></label>
+      <label>Trail after (R)<input type="number" id="c_trailAfterR" step="0.1" value="1.5"></label>
+      <label>Trail distance (×ATR)<input type="number" id="c_trailAtr" step="0.1" value="2.5"></label>
+      <label>Bank at TP1 (%)<input type="number" id="c_tp1Portion" step="5" value="50"></label>
+    </div>
+    <label class="row"><span>Trail the stop behind price</span><input type="checkbox" id="c_useTrail" checked></label>
+
     <h4>Take profit</h4>
     <label class="row"><span>TP source</span>
       <select id="c_tpMode" style="padding:7px 9px;border-radius:8px;border:1px solid var(--line);background:var(--panel2)">

@@ -15,6 +15,10 @@ export const DEFAULTS = {
   slBuf: 0.25, minRiskAtr: 0.35, rr1: 1.0, rr2: 2.0,
   useRevExit: true, revOnlyInProfit: true, beAfterTp1: true, maxBars: 40,
   tp1Portion: 0.5,          // fraction of the position banked at TP1
+  beAtR: 1.0,               // move the stop to entry once the trade reaches this R
+  useTrail: true,           // trail the stop behind the running high/low
+  trailAfterR: 1.5,         // start trailing once this R is reached
+  trailAtr: 2.5,            // trail distance, in ATR
   preAlertPct: 0.35,        // warn when price is this % from the trigger
   preAlertBars: 3,          // ...or when the cross is this many bars away
   ...VP_DEFAULTS            // tpMode, vpLen, vpRows, vaPct, hvnThr, minTpAtr, fallbackRR
@@ -70,6 +74,14 @@ export function analyze(candles, userCfg = {}) {
   const bearRev = i => star(i) || bearEng(i) || macdXdn(i) || (r[i] > cfg.rsiOB && close[i] < open[i]) || crossDn(i);
   const bullRev = i => hammer(i) || bullEng(i) || macdXup(i) || (r[i] < cfg.rsiOS && close[i] > open[i]) || crossUp(i);
 
+  // Name the stop for what it actually was, so the history reads at a glance.
+  const stopLabel = (tp1, be, sl, entry) => {
+    const beyondEntry = pos === 1 ? sl > entry : sl < entry;
+    if (beyondEntry) return tp1 ? 'TP1 HIT → TRAIL' : 'TRAIL STOP';
+    if (sl === entry) return tp1 ? 'TP1 HIT → BE' : 'BE STOP';
+    return tp1 ? 'TP1 HIT → SL' : 'SL HIT';
+  };
+
   // A momentum flip (EMA/MACD cross) always counts. A lone candle pattern only
   // counts when it lands on a volume shelf — otherwise it's noise.
   const momentumFlip = (i, dir) => dir === 1 ? (macdXdn(i) || crossDn(i)) : (macdXup(i) || crossUp(i));
@@ -84,6 +96,7 @@ export function analyze(candles, userCfg = {}) {
   let pos = 0, entryP = null, slP = null, slInit = null, tp1P = null, tp2P = null;
   let entryBar = null, tp1Done = false, lastExit = -9999;
   let entryProf = null;
+  let mfePx = null, beDone = false, tp2Hit = false;
   const trades = [];
   let openTrade = null;
 
@@ -92,10 +105,19 @@ export function analyze(candles, userCfg = {}) {
     let exitPx = null, exitTag = '', flip = false;
 
     if (pos === 1) {
-      if (low[i] <= slP) { exitPx = Math.min(slP, open[i]); exitTag = (tp1Done && cfg.beAfterTp1) ? 'BE STOP' : 'SL'; }
-      else if (high[i] >= tp2P) { exitPx = tp2P; exitTag = 'TP2'; }
+      if (low[i] <= slP) { exitPx = Math.min(slP, open[i]); exitTag = stopLabel(tp1Done, beDone, slP, entryP); }
+      else if (high[i] >= tp2P) { exitPx = tp2P; tp2Hit = true; exitTag = 'TP2 HIT'; }
       else {
         if (!tp1Done && high[i] >= tp1P) { tp1Done = true; if (cfg.beAfterTp1) slP = entryP; }
+
+        // Ratchet the stop using this bar's extreme, but only AFTER the stop has
+        // been tested above — otherwise a bar's high would protect against its
+        // own low. A trade that ran to +1R and came back should not book -1R.
+        mfePx = Math.max(mfePx, high[i]);
+        const mfeR = (mfePx - entryP) / (entryP - slInit);
+        if (!beDone && mfeR >= cfg.beAtR) { slP = Math.max(slP, entryP); beDone = true; }
+        if (cfg.useTrail && mfeR >= cfg.trailAfterR) slP = Math.max(slP, mfePx - a[i] * cfg.trailAtr);
+
         if (i > entryBar) {
           if (cfg.useRevExit && bearRev(i) && revConfirmed(i, 1) && (!cfg.revOnlyInProfit || close[i] > entryP)) { exitPx = close[i]; exitTag = revTag(i, 1); flip = shortSig(i); }
           else if (shortSig(i)) { exitPx = close[i]; exitTag = 'FLIP'; flip = true; }
@@ -103,10 +125,16 @@ export function analyze(candles, userCfg = {}) {
         }
       }
     } else if (pos === -1) {
-      if (high[i] >= slP) { exitPx = Math.max(slP, open[i]); exitTag = (tp1Done && cfg.beAfterTp1) ? 'BE STOP' : 'SL'; }
-      else if (low[i] <= tp2P) { exitPx = tp2P; exitTag = 'TP2'; }
+      if (high[i] >= slP) { exitPx = Math.max(slP, open[i]); exitTag = stopLabel(tp1Done, beDone, slP, entryP); }
+      else if (low[i] <= tp2P) { exitPx = tp2P; tp2Hit = true; exitTag = 'TP2 HIT'; }
       else {
         if (!tp1Done && low[i] <= tp1P) { tp1Done = true; if (cfg.beAfterTp1) slP = entryP; }
+
+        mfePx = Math.min(mfePx, low[i]);
+        const mfeR = (entryP - mfePx) / (slInit - entryP);
+        if (!beDone && mfeR >= cfg.beAtR) { slP = Math.min(slP, entryP); beDone = true; }
+        if (cfg.useTrail && mfeR >= cfg.trailAfterR) slP = Math.min(slP, mfePx + a[i] * cfg.trailAtr);
+
         if (i > entryBar) {
           if (cfg.useRevExit && bullRev(i) && revConfirmed(i, -1) && (!cfg.revOnlyInProfit || close[i] < entryP)) { exitPx = close[i]; exitTag = revTag(i, -1); flip = longSig(i); }
           else if (longSig(i)) { exitPx = close[i]; exitTag = 'FLIP'; flip = true; }
@@ -124,12 +152,15 @@ export function analyze(candles, userCfg = {}) {
       const part = tp1Done ? Math.min(1, Math.max(0, cfg.tp1Portion)) : 0;
       const rMult = part * rAt(tp1P) + (1 - part) * rAt(exitPx);
       const pnlPct = part * pctAt(tp1P) + (1 - part) * pctAt(exitPx);
+      const peakR = mfePx === null ? 0 : rAt(mfePx);
       trades.push({
         ...openTrade, exitBar: i, exitTime: candles[i].t, exitPrice: exitPx, reason: exitTag,
         r: rMult, pnlPct, tp1Filled: tp1Done, tp1Portion: part,
+        tp1Hit: tp1Done, tp2Hit, peakR, peakPct: mfePx === null ? 0 : pctAt(mfePx),
+        gaveBack: peakR - rMult,
         rFinalLeg: rAt(exitPx), pctFinalLeg: pctAt(exitPx)
       });
-      pos = 0; tp1Done = false; lastExit = i; openTrade = null;
+      pos = 0; tp1Done = false; beDone = false; tp2Hit = false; mfePx = null; lastExit = i; openTrade = null;
     }
 
     const canEnter = pos === 0 && (flip || i - lastExit >= cfg.cooldown);
@@ -163,7 +194,8 @@ export function analyze(candles, userCfg = {}) {
         tpSource = `${cfg.rr1}R \u2192 ${cfg.rr2}R`;
       }
 
-      pos = dir; entryBar = i; tp1Done = false;
+      pos = dir; entryBar = i; tp1Done = false; beDone = false; tp2Hit = false;
+      mfePx = close[i];
       openTrade = {
         side: dir === 1 ? 'LONG' : 'SHORT', entryBar: i, entryTime: candles[i].t,
         entryPrice: entryP, sl: slP, tp1: tp1P, tp2: tp2P, tpSource,
@@ -183,7 +215,9 @@ export function analyze(candles, userCfg = {}) {
     ...openTrade, sl: slP, tp1: tp1P, tp2: tp2P, tp1Done, tp1Portion: livePart,
     barsHeld: li - entryBar,
     livePnlPct: livePart * livePctAt(tp1P) + (1 - livePart) * livePctAt(px),
-    liveR: livePart * liveRAt(tp1P) + (1 - livePart) * liveRAt(px)
+    liveR: livePart * liveRAt(tp1P) + (1 - livePart) * liveRAt(px),
+    peakR: mfePx === null ? 0 : liveRAt(mfePx),
+    trailing: beDone
   } : null;
 
   const wins = trades.filter(t => t.r >= 0).length;
