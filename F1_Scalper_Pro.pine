@@ -1,0 +1,315 @@
+//@version=5
+indicator("F1 Scalper Pro — Entry / TP / SL", shorttitle="F1 PRO", overlay=true, max_labels_count=500, max_lines_count=500, max_boxes_count=500)
+
+// ═══════════════════════ ① SIGNAL ENGINE ═══════════════════════
+gS = "① Signal Engine"
+emaFastLength = input.int(9,   "Fast EMA",       group=gS)
+emaSlowLength = input.int(21,  "Slow EMA",       group=gS)
+rsiLength     = input.int(14,  "RSI Length",     group=gS)
+rsiOverbought = input.int(70,  "RSI Overbought", group=gS)
+rsiOversold   = input.int(30,  "RSI Oversold",   group=gS)
+macdFastLen   = input.int(12,  "MACD Fast",      group=gS)
+macdSlowLen   = input.int(26,  "MACD Slow",      group=gS)
+macdSignalLen = input.int(9,   "MACD Signal",    group=gS)
+entryOnClose  = input.bool(true, "Confirm entries on bar close (no repaint)", group=gS)
+
+// ═══════════════════ ② FILTERS (3m volatile coins) ═══════════════════
+gF = "② Optional Filters — ALL OFF = original F1 signals"
+volLen       = input.int(20,     "Volume MA Length",        group=gF)
+volMult      = input.float(1.5,  "Volume Spike Multiplier", step=0.1, group=gF)
+requireVol   = input.bool(false, "Require volume spike",    group=gF, tooltip="OFF = original behaviour (volume was only a badge, not a filter).")
+useTrend     = input.bool(false, "Trend filter (EMA 200)",  group=gF)
+trendLen     = input.int(200,    "Trend EMA Length",        group=gF)
+useAtrFilter = input.bool(false, "Skip dead / low-volatility bars", group=gF)
+minAtrPct    = input.float(0.10, "Min ATR as % of price",   step=0.01, group=gF)
+rsiTwoSided  = input.bool(false, "Two-sided RSI bound",     group=gF, tooltip="OFF = original (longs only need RSI > oversold). ON also blocks longs above overbought / shorts below oversold.")
+cooldown     = input.int(0,      "Cooldown bars after a trade closes", group=gF)
+
+// ═══════════════════ ③ RISK — STOP LOSS & TAKE PROFIT ═══════════════════
+gR = "③ Risk — SL / TP"
+atrLen          = input.int(14, "ATR Length", group=gR)
+slMode          = input.string("Swing", "Stop basis", options=["Prev candle","Swing","ATR"], group=gR, tooltip="Prev candle = just beyond the candle before entry (what you asked for). Swing = beyond the lowest/highest of the last N bars — safer on 3m wicks.")
+slLookback      = input.int(3,    "Swing lookback (bars)",     minval=1, group=gR)
+slAtrMult       = input.float(1.2,"ATR stop multiplier",        step=0.1, group=gR)
+slBuf           = input.float(0.25,"Stop buffer (× ATR)",       step=0.05, group=gR, tooltip="Pushes the stop past the wick so stop-hunts don't clip you.")
+minRiskAtr      = input.float(0.35,"Min stop distance (× ATR)", step=0.05, group=gR)
+rr1             = input.float(1.0, "TP1 (R multiple)",          step=0.1, group=gR)
+rr2             = input.float(2.0, "TP2 / final (R multiple)",  step=0.1, group=gR)
+useRevExit      = input.bool(true, "Bank profit early on reversal signal", group=gR)
+revOnlyInProfit = input.bool(true, "   …only when trade is in profit",     group=gR)
+beAfterTp1      = input.bool(true, "Move stop to breakeven after TP1",     group=gR)
+maxBars         = input.int(40,    "Time stop (bars, 0 = off)", group=gR)
+
+// ═══════════════════════ ④ VISUALS ═══════════════════════
+gV = "④ Visuals"
+showRaw       = input.bool(true,  "Show ALL original F1 signals (arrows)", group=gV)
+showRawLabels = input.bool(false, "…as full LONG/SHORT @ price labels",   group=gV)
+showZones  = input.bool(true, "Show TP / SL zones",  group=gV)
+showLabels = input.bool(true, "Show trade labels",   group=gV)
+showStats  = input.bool(true, "Show stats table",    group=gV)
+
+// ═══════════════════════ CALCULATIONS ═══════════════════════
+emaFast  = ta.ema(close, emaFastLength)
+emaSlow  = ta.ema(close, emaSlowLength)
+emaTrend = ta.ema(close, trendLen)
+rsi      = ta.rsi(close, rsiLength)
+atr      = ta.atr(atrLen)
+atrPct   = atr / close * 100
+
+[macdLine, signalLine, macdHist] = ta.macd(close, macdFastLen, macdSlowLen, macdSignalLen)
+macdBull = macdLine > signalLine
+macdBear = macdLine < signalLine
+
+avgVolume = ta.sma(volume, volLen)
+volSpike  = volume > avgVolume * volMult
+
+// swing levels — MUST be global (ta.* inside if-blocks misbehaves)
+swingLo = ta.lowest(low,  slLookback)
+swingHi = ta.highest(high, slLookback)
+
+// ─── Reversal candles ───
+body   = math.abs(close - open)
+upWick = high - math.max(close, open)
+loWick = math.min(close, open) - low
+
+hammer       = loWick >= body * 2 and upWick <= body and close > open
+shootingStar = upWick >= body * 2 and loWick <= body and close < open
+bullEngulf   = close > open and close[1] < open[1] and close > open[1] and open < close[1]
+bearEngulf   = close < open and close[1] > open[1] and close < open[1] and open > close[1]
+
+// Composite reversal read — this is the "market is turning" trigger for early TP
+bearRev = shootingStar or bearEngulf or ta.crossunder(macdLine, signalLine) or (rsi > rsiOverbought and close < open) or ta.crossunder(emaFast, emaSlow)
+bullRev = hammer or bullEngulf or ta.crossover(macdLine, signalLine)  or (rsi < rsiOversold  and close > open) or ta.crossover(emaFast, emaSlow)
+
+// ─── Entry conditions ───
+trendOkL = not useTrend     or close > emaTrend
+trendOkS = not useTrend     or close < emaTrend
+atrOk    = not useAtrFilter or atrPct >= minAtrPct
+volOk    = not requireVol   or volSpike
+sigOk    = not entryOnClose or barstate.isconfirmed
+
+// ORIGINAL F1 signal — identical to your first script, never filtered
+longBase  = ta.crossover(emaFast, emaSlow)  and rsi > rsiOversold  and macdBull
+shortBase = ta.crossunder(emaFast, emaSlow) and rsi < rsiOverbought and macdBear
+longConfirmed  = longBase  and volSpike
+shortConfirmed = shortBase and volSpike
+
+rsiOkL = not rsiTwoSided or rsi < rsiOverbought
+rsiOkS = not rsiTwoSided or rsi > rsiOversold
+
+longRaw  = longBase  and rsiOkL and trendOkL and atrOk and volOk
+shortRaw = shortBase and rsiOkS and trendOkS and atrOk and volOk
+
+longSig  = longRaw  and sigOk
+shortSig = shortRaw and sigOk
+
+// ═══════════════════════ TRADE STATE ═══════════════════════
+var int   pos        = 0        // 1 long, -1 short, 0 flat
+var float entryP     = na
+var float slP        = na       // live stop (may trail to BE)
+var float slInit     = na       // original stop — used for R math
+var float tp1P       = na
+var float tp2P       = na
+var int   entryBarIx = na
+var bool  tp1Done    = false
+var int   lastExitIx = -9999
+
+var int   nWin  = 0
+var int   nLoss = 0
+var float sumR  = 0.0
+
+var box  tpBox = na
+var box  slBox = na
+var line tp1Ln = na
+var line entLn = na
+
+// per-bar scratch
+float  exitPx  = na
+string exitTag = ""
+bool   flipNow = false
+bool   markL   = false
+bool   markS   = false
+
+// ═══════════════════════ EXIT LOGIC (runs first) ═══════════════════════
+if pos == 1
+    if low <= slP
+        exitPx  := math.min(slP, open)                        // gap-through fills at open
+        exitTag := tp1Done and beAfterTp1 ? "BE STOP" : "SL"
+    else if high >= tp2P
+        exitPx  := tp2P
+        exitTag := "TP2 ✅"
+    else
+        if not tp1Done and high >= tp1P
+            tp1Done := true
+            if beAfterTp1
+                slP := entryP
+        if bar_index > entryBarIx
+            if useRevExit and bearRev and (not revOnlyInProfit or close > entryP)
+                exitPx  := close
+                exitTag := "TP · REVERSAL"
+                flipNow := shortSig
+            else if shortSig
+                exitPx  := close
+                exitTag := "FLIP ⇄"
+                flipNow := true
+            else if maxBars > 0 and bar_index - entryBarIx >= maxBars
+                exitPx  := close
+                exitTag := "TIME"
+
+if pos == -1
+    if high >= slP
+        exitPx  := math.max(slP, open)
+        exitTag := tp1Done and beAfterTp1 ? "BE STOP" : "SL"
+    else if low <= tp2P
+        exitPx  := tp2P
+        exitTag := "TP2 ✅"
+    else
+        if not tp1Done and low <= tp1P
+            tp1Done := true
+            if beAfterTp1
+                slP := entryP
+        if bar_index > entryBarIx
+            if useRevExit and bullRev and (not revOnlyInProfit or close < entryP)
+                exitPx  := close
+                exitTag := "TP · REVERSAL"
+                flipNow := longSig
+            else if longSig
+                exitPx  := close
+                exitTag := "FLIP ⇄"
+                flipNow := true
+            else if maxBars > 0 and bar_index - entryBarIx >= maxBars
+                exitPx  := close
+                exitTag := "TIME"
+
+// ─── Book the closed trade ───
+if not na(exitPx)
+    rMult = pos == 1 ? (exitPx - entryP) / (entryP - slInit) : (entryP - exitPx) / (slInit - entryP)
+    pnlPct = (pos == 1 ? (exitPx - entryP) : (entryP - exitPx)) / entryP * 100
+    if rMult >= 0
+        nWin += 1
+    else
+        nLoss += 1
+    sumR += rMult
+
+    if showLabels
+        label.new(bar_index, pos == 1 ? high : low, exitTag + "  " + str.tostring(exitPx, format.mintick) + "\n" + str.tostring(rMult, "#.##") + "R  (" + str.tostring(pnlPct, "#.##") + "%)", style = pos == 1 ? label.style_label_down : label.style_label_up, color = rMult >= 0 ? color.new(color.teal, 20) : color.new(color.maroon, 20), textcolor=color.white, size=size.small)
+
+    if showZones and not na(tpBox)
+        box.set_right(tpBox, bar_index)
+        box.set_right(slBox, bar_index)
+        line.set_x2(tp1Ln, bar_index)
+        line.set_x2(entLn, bar_index)
+
+    alert("EXIT " + (pos == 1 ? "LONG" : "SHORT") + " " + syminfo.ticker + " | " + exitTag + " @ " + str.tostring(exitPx, format.mintick) + " | " + str.tostring(rMult, "#.##") + "R", alert.freq_once_per_bar)
+
+    pos        := 0
+    tp1Done    := false
+    lastExitIx := bar_index
+
+// ═══════════════════════ ENTRY LOGIC ═══════════════════════
+canEnter = pos == 0 and (flipNow or bar_index - lastExitIx >= cooldown)
+
+if canEnter and (longSig or shortSig)
+    dir = longSig ? 1 : -1
+
+    // --- STOP: below the candle(s) before entry, padded past the wick ---
+    float rawSL = na
+    if dir == 1
+        base = slMode == "Prev candle" ? low[1] : slMode == "Swing" ? swingLo : close - atr * slAtrMult
+        rawSL := slMode == "ATR" ? base : math.min(base, low) - atr * slBuf
+    else
+        base = slMode == "Prev candle" ? high[1] : slMode == "Swing" ? swingHi : close + atr * slAtrMult
+        rawSL := slMode == "ATR" ? base : math.max(base, high) + atr * slBuf
+
+    entryP := close
+    risk   = math.max(dir == 1 ? entryP - rawSL : rawSL - entryP, atr * minRiskAtr)
+
+    slP    := dir == 1 ? entryP - risk : entryP + risk
+    slInit := slP
+    tp1P   := dir == 1 ? entryP + risk * rr1 : entryP - risk * rr1
+    tp2P   := dir == 1 ? entryP + risk * rr2 : entryP - risk * rr2
+
+    pos        := dir
+    entryBarIx := bar_index
+    tp1Done    := false
+    markL      := dir ==  1
+    markS      := dir == -1
+
+    tpPct = math.abs(tp2P - entryP) / entryP * 100
+    slPct = math.abs(entryP - slP)  / entryP * 100
+
+    if showLabels
+        label.new(bar_index, dir == 1 ? low : high, (dir == 1 ? "LONG" : "SHORT") + (volSpike ? " ✅" : "") + "  " + str.tostring(entryP, format.mintick) + "\nTP1 " + str.tostring(tp1P, format.mintick) + "\nTP2 " + str.tostring(tp2P, format.mintick) + "  (+" + str.tostring(tpPct, "#.##") + "%)" + "\nSL  " + str.tostring(slP, format.mintick) + "  (-" + str.tostring(slPct, "#.##") + "%)", style = dir == 1 ? label.style_label_up : label.style_label_down, color = dir == 1 ? color.new(color.green, 15) : color.new(color.red, 15), textcolor=color.white, size=size.small)
+
+    if showZones
+        tpBox := box.new(bar_index, math.max(entryP, tp2P), bar_index + 1, math.min(entryP, tp2P), border_color=color.new(color.green, 40), bgcolor=color.new(color.green, 88))
+        slBox := box.new(bar_index, math.max(entryP, slP),  bar_index + 1, math.min(entryP, slP),  border_color=color.new(color.red, 40),   bgcolor=color.new(color.red, 88))
+        tp1Ln := line.new(bar_index, tp1P,   bar_index + 1, tp1P,   color=color.new(color.teal, 0),  style=line.style_dotted, width=1)
+        entLn := line.new(bar_index, entryP, bar_index + 1, entryP, color=color.new(color.gray, 30), style=line.style_dashed, width=1)
+
+    alert((dir == 1 ? "🚀 LONG " : "🔻 SHORT ") + syminfo.ticker + " " + timeframe.period + " @ " + str.tostring(entryP, format.mintick) + " | TP1 " + str.tostring(tp1P, format.mintick) + " | TP2 " + str.tostring(tp2P, format.mintick) + " | SL " + str.tostring(slP, format.mintick) + " | Risk " + str.tostring(slPct, "#.##") + "%", alert.freq_once_per_bar)
+
+// ─── keep the open trade's zones stretching to the right ───
+if pos != 0 and showZones and not na(tpBox)
+    box.set_right(tpBox, bar_index + 1)
+    box.set_right(slBox, bar_index + 1)
+    box.set_bottom(slBox, math.min(entryP, slP))       // reflects BE trail
+    box.set_top(slBox,    math.max(entryP, slP))
+    line.set_x2(tp1Ln, bar_index + 1)
+    line.set_x2(entLn, bar_index + 1)
+
+// ═══════════════════════ PLOTS ═══════════════════════
+plot(emaFast,  "Fast EMA",  color.new(color.green, 0), 2)
+plot(emaSlow,  "Slow EMA",  color.new(color.red,   0), 2)
+plot(useTrend ? emaTrend : na, "Trend EMA", color.new(color.orange, 40), 2)
+
+plotshape(volSpike, "Volume Spike", shape.circle, location.bottom, color.new(color.purple, 40), size=size.tiny)
+
+// every original F1 signal — aqua = volume-confirmed, faded = plain
+plotshape(showRaw and longBase  and not volSpike, "F1 Long (raw)",   shape.triangleup,   location.belowbar, color.new(color.green, 55), size=size.tiny)
+plotshape(showRaw and longConfirmed,              "F1 Long ✅ (raw)",  shape.triangleup,   location.belowbar, color.new(color.aqua, 10),  size=size.tiny)
+plotshape(showRaw and shortBase and not volSpike, "F1 Short (raw)",  shape.triangledown, location.abovebar, color.new(color.red, 55),   size=size.tiny)
+plotshape(showRaw and shortConfirmed,             "F1 Short ✅ (raw)", shape.triangledown, location.abovebar, color.new(color.aqua, 10),  size=size.tiny)
+plotshape(markL, "Long Entry",  shape.triangleup,   location.belowbar, color.new(color.green, 0), size=size.tiny)
+plotshape(markS, "Short Entry", shape.triangledown, location.abovebar, color.new(color.red,   0), size=size.tiny)
+
+// live TP/SL rails so you can see them without hunting the label
+plot(pos != 0 ? tp2P : na, "TP2", color.new(color.green, 0), 1, plot.style_linebr)
+plot(pos != 0 ? tp1P : na, "TP1", color.new(color.teal,  0), 1, plot.style_linebr)
+plot(pos != 0 ? slP  : na, "SL",  color.new(color.red,   0), 1, plot.style_linebr)
+
+bgcolor(pos == 1 ? color.new(color.green, 94) : pos == -1 ? color.new(color.red, 94) : na)
+
+// ═══════════════════════ STATS TABLE ═══════════════════════
+var table st = table.new(position.top_right, 2, 6, border_width=1, frame_width=1, frame_color=color.new(color.gray, 50))
+if showStats and barstate.islast
+    total = nWin + nLoss
+    wr    = total > 0 ? 100.0 * nWin / total : 0.0
+    avgR  = total > 0 ? sumR / total : 0.0
+    table.cell(st, 0, 0, "F1 PRO  " + timeframe.period, text_color=color.white, bgcolor=color.new(color.blue, 30), text_size=size.small)
+    table.cell(st, 1, 0, pos == 1 ? "IN LONG" : pos == -1 ? "IN SHORT" : "FLAT", text_color=color.white, bgcolor = pos == 1 ? color.new(color.green, 30) : pos == -1 ? color.new(color.red, 30) : color.new(color.gray, 30), text_size=size.small)
+    table.cell(st, 0, 1, "Trades",  text_color=color.silver, text_size=size.small)
+    table.cell(st, 1, 1, str.tostring(total), text_color=color.white, text_size=size.small)
+    table.cell(st, 0, 2, "Win rate", text_color=color.silver, text_size=size.small)
+    table.cell(st, 1, 2, str.tostring(wr, "#.#") + "%", text_color = wr >= 50 ? color.lime : color.orange, text_size=size.small)
+    table.cell(st, 0, 3, "W / L",   text_color=color.silver, text_size=size.small)
+    table.cell(st, 1, 3, str.tostring(nWin) + " / " + str.tostring(nLoss), text_color=color.white, text_size=size.small)
+    table.cell(st, 0, 4, "Total R", text_color=color.silver, text_size=size.small)
+    table.cell(st, 1, 4, str.tostring(sumR, "#.##") + "R", text_color = sumR >= 0 ? color.lime : color.red, text_size=size.small)
+    table.cell(st, 0, 5, "Avg R",   text_color=color.silver, text_size=size.small)
+    table.cell(st, 1, 5, str.tostring(avgR, "#.##") + "R", text_color = avgR >= 0 ? color.lime : color.red, text_size=size.small)
+
+// ═══════════════════════ ORIGINAL-STYLE LABELS ═══════════════════════
+if showRawLabels and longBase
+    label.new(bar_index, low, (longConfirmed ? "LONG CONFIRMED ✅ " : "LONG @ ") + str.tostring(close, format.mintick), style=label.style_label_up, color = longConfirmed ? color.new(color.blue, 20) : color.new(color.green, 35), textcolor=color.white, size=size.small)
+if showRawLabels and shortBase
+    label.new(bar_index, high, (shortConfirmed ? "SHORT CONFIRMED ✅ " : "SHORT @ ") + str.tostring(close, format.mintick), style=label.style_label_down, color = shortConfirmed ? color.new(color.blue, 20) : color.new(color.red, 35), textcolor=color.white, size=size.small)
+
+// ═══════════════════════ STATIC ALERTS ═══════════════════════
+alertcondition(longBase,  "Long (original F1)",  "Scalping: Go LONG 🚀 @{{close}}")
+alertcondition(shortBase, "Short (original F1)", "Scalping: Go SHORT 🔻 @{{close}}")
+alertcondition(longConfirmed,  "Long Confirmed",  "✅ Strong LONG with Volume @{{close}}")
+alertcondition(shortConfirmed, "Short Confirmed", "✅ Strong SHORT with Volume @{{close}}")
+alertcondition(longSig,  "Managed Long Entry",  "F1: LONG {{ticker}} @ {{close}}")
+alertcondition(shortSig, "Managed Short Entry", "F1: SHORT {{ticker}} @ {{close}}")
+alertcondition(not na(exitPx), "Any Exit", "F1: EXIT {{ticker}} @ {{close}}")

@@ -1,0 +1,107 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#0b0e14">
+<link rel="manifest" href="/manifest.json">
+<link rel="stylesheet" href="/styles.css">
+<title>F1 Signal Alarm</title>
+</head>
+<body>
+
+<header class="topbar">
+  <div class="brand">
+    <span class="logo">F1</span>
+    <div>
+      <h1>Signal Alarm</h1>
+      <span class="sub" id="conn"><i class="dot"></i> connecting…</span>
+    </div>
+  </div>
+  <div class="actions">
+    <button id="soundBtn" class="btn ghost" title="Browser alarm sound">🔇 Sound</button>
+    <button id="pushBtn" class="btn ghost" title="Push to this device">📱 Push</button>
+    <button id="muteBtn" class="btn ghost" title="Mute all alerts">🔔 Live</button>
+    <button id="testBtn" class="btn ghost">Test</button>
+    <button id="cfgBtn" class="btn ghost">⚙</button>
+  </div>
+</header>
+
+<section class="searchbar">
+  <div class="searchwrap">
+    <input id="q" type="search" placeholder="Search any coin or pair — doge, pepe, btc, wif, EUR/USD …" autocomplete="off">
+    <div id="results" class="results hidden"></div>
+  </div>
+  <select id="tf" title="Timeframe">
+    <option value="1m">1m</option>
+    <option value="3m" selected>3m</option>
+    <option value="5m">5m</option>
+    <option value="15m">15m</option>
+    <option value="30m">30m</option>
+    <option value="1h">1h</option>
+  </select>
+</section>
+
+<main>
+  <div id="grid" class="grid"></div>
+  <div id="empty" class="empty">
+    <h2>No symbols yet</h2>
+    <p>Search above and hit a result to start watching. Signals fire on closed candles;
+       you also get a heads-up while a setup is still forming.</p>
+  </div>
+</main>
+
+<section class="logwrap">
+  <h3>Alert feed</h3>
+  <div id="log" class="log"></div>
+</section>
+
+<!-- settings -->
+<div id="modal" class="modal hidden">
+  <div class="sheet">
+    <div class="sheethead">
+      <h2>Settings</h2>
+      <button id="closeCfg" class="btn ghost">✕</button>
+    </div>
+
+    <div class="channels" id="channels"></div>
+
+    <h4>Alerts</h4>
+    <label class="row"><span>Pre-alerts (signal forming)</span><input type="checkbox" id="preAlerts" checked></label>
+    <label class="row"><span>Exit alerts (TP / SL hit)</span><input type="checkbox" id="exitAlerts" checked></label>
+    <label class="row"><span>Pre-alert distance</span><input type="number" id="preAlertPct" step="0.05" min="0.05" value="0.35"><em>%</em></label>
+    <label class="row"><span>Pre-alert lead</span><input type="number" id="preAlertBars" step="1" min="1" value="3"><em>bars</em></label>
+
+    <h4>Indicator (applies to new symbols)</h4>
+    <div class="gridcfg">
+      <label>Fast EMA<input type="number" id="c_emaFast" value="9"></label>
+      <label>Slow EMA<input type="number" id="c_emaSlow" value="21"></label>
+      <label>RSI len<input type="number" id="c_rsiLen" value="14"></label>
+      <label>RSI OB<input type="number" id="c_rsiOB" value="70"></label>
+      <label>RSI OS<input type="number" id="c_rsiOS" value="30"></label>
+      <label>ATR len<input type="number" id="c_atrLen" value="14"></label>
+      <label>TP1 (R)<input type="number" id="c_rr1" step="0.1" value="1"></label>
+      <label>TP2 (R)<input type="number" id="c_rr2" step="0.1" value="2"></label>
+      <label>SL basis
+        <select id="c_slMode">
+          <option>Swing</option><option>Prev candle</option><option>ATR</option>
+        </select>
+      </label>
+      <label>SL lookback<input type="number" id="c_slLookback" value="3"></label>
+      <label>SL buffer (×ATR)<input type="number" id="c_slBuf" step="0.05" value="0.25"></label>
+      <label>Time stop (bars)<input type="number" id="c_maxBars" value="40"></label>
+    </div>
+    <label class="row"><span>Require volume spike</span><input type="checkbox" id="c_requireVol"></label>
+    <label class="row"><span>Trend filter (EMA 200)</span><input type="checkbox" id="c_useTrend"></label>
+    <label class="row"><span>Early TP on reversal</span><input type="checkbox" id="c_useRevExit" checked></label>
+    <label class="row"><span>Breakeven after TP1</span><input type="checkbox" id="c_beAfterTp1" checked></label>
+
+    <button id="saveCfg" class="btn primary wide">Save</button>
+    <p class="hint">Indicator changes apply to symbols you add afterwards. To re-tune one you're
+       already watching, remove and re-add it.</p>
+  </div>
+</div>
+
+<script src="/app.js"></script>
+</body>
+</html>

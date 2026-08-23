@@ -1,0 +1,15 @@
+services:
+  - type: web
+    name: f1-signal-alarm
+    runtime: docker
+    plan: free
+    healthCheckPath: /
+    envVars:
+      - key: APP_PASSWORD
+        generateValue: true
+      - key: TELEGRAM_TOKEN
+        sync: false
+      - key: TELEGRAM_CHAT_ID
+        sync: false
+      - key: NTFY_TOPIC
+        sync: false
