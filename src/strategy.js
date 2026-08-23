@@ -3,6 +3,7 @@
 
 import { ema, sma, rsi, macd, atr, lowest, highest, emaNext, crossPrice } from './indicators.js';
 import { VP_DEFAULTS, buildProfile, pickTargets, atNode } from './volumeprofile.js';
+import { calibrate } from './calibrate.js';
 
 export const DEFAULTS = {
   emaFast: 9, emaSlow: 21,
@@ -11,10 +12,12 @@ export const DEFAULTS = {
   volLen: 20, volMult: 1.5,
   requireVol: false, useTrend: false, trendLen: 200,
   useAtrFilter: false, minAtrPct: 0.10, rsiTwoSided: false, cooldown: 0,
-  atrLen: 14, slMode: 'Swing', slLookback: 3, slAtrMult: 1.2,
+  atrLen: 14, slMode: 'Auto', slLookback: 3, slAtrMult: 1.2,
   slBuf: 0.25, minRiskAtr: 0.35, rr1: 1.0, rr2: 2.0,
   useRevExit: true, revOnlyInProfit: true, beAfterTp1: true, maxBars: 40,
   tp1Portion: 0.5,          // fraction of the position banked at TP1
+  runner: true,             // no fixed TP2 — bank part at TP1, trail the rest
+  autoCoverage: 0.85,       // stop must clear this share of winners' pullbacks
   beAtR: 1.0,               // move the stop to entry once the trade reaches this R
   useTrail: true,           // trail the stop behind the running high/low
   trailAfterR: 1.5,         // start trailing once this R is reached
@@ -82,6 +85,12 @@ export function analyze(candles, userCfg = {}) {
     return tp1 ? 'TP1 HIT → SL' : 'SL HIT';
   };
 
+  // Where does price actually go against a signal that ends up working? The stop
+  // belongs just past that, not at an arbitrary swing low.
+  const cal = cfg.slMode === 'Auto'
+    ? calibrate(candles, { ...cfg, coverage: cfg.autoCoverage, workedAtr: 2.0 })
+    : null;
+
   // A momentum flip (EMA/MACD cross) always counts. A lone candle pattern only
   // counts when it lands on a volume shelf — otherwise it's noise.
   const momentumFlip = (i, dir) => dir === 1 ? (macdXdn(i) || crossDn(i)) : (macdXup(i) || crossUp(i));
@@ -106,7 +115,7 @@ export function analyze(candles, userCfg = {}) {
 
     if (pos === 1) {
       if (low[i] <= slP) { exitPx = Math.min(slP, open[i]); exitTag = stopLabel(tp1Done, beDone, slP, entryP); }
-      else if (high[i] >= tp2P) { exitPx = tp2P; tp2Hit = true; exitTag = 'TP2 HIT'; }
+      else if (tp2P !== null && high[i] >= tp2P) { exitPx = tp2P; tp2Hit = true; exitTag = 'TP2 HIT'; }
       else {
         if (!tp1Done && high[i] >= tp1P) { tp1Done = true; if (cfg.beAfterTp1) slP = entryP; }
 
@@ -126,7 +135,7 @@ export function analyze(candles, userCfg = {}) {
       }
     } else if (pos === -1) {
       if (high[i] >= slP) { exitPx = Math.max(slP, open[i]); exitTag = stopLabel(tp1Done, beDone, slP, entryP); }
-      else if (low[i] <= tp2P) { exitPx = tp2P; tp2Hit = true; exitTag = 'TP2 HIT'; }
+      else if (tp2P !== null && low[i] <= tp2P) { exitPx = tp2P; tp2Hit = true; exitTag = 'TP2 HIT'; }
       else {
         if (!tp1Done && low[i] <= tp1P) { tp1Done = true; if (cfg.beAfterTp1) slP = entryP; }
 
@@ -168,11 +177,19 @@ export function analyze(candles, userCfg = {}) {
       const dir = longSig(i) ? 1 : -1;
       let raw;
       if (dir === 1) {
-        const base = cfg.slMode === 'Prev candle' ? low[i - 1] : cfg.slMode === 'Swing' ? lowest(low, cfg.slLookback, i) : close[i] - a[i] * cfg.slAtrMult;
-        raw = cfg.slMode === 'ATR' ? base : Math.min(base, low[i]) - a[i] * cfg.slBuf;
+        const auto = cal?.stopAtr ? close[i] - a[i] * cal.stopAtr : null;
+        const base = cfg.slMode === 'Auto' ? (auto ?? lowest(low, cfg.slLookback, i))
+          : cfg.slMode === 'Prev candle' ? low[i - 1]
+          : cfg.slMode === 'Swing' ? lowest(low, cfg.slLookback, i)
+          : close[i] - a[i] * cfg.slAtrMult;
+        raw = (cfg.slMode === 'ATR' || (cfg.slMode === 'Auto' && auto)) ? base : Math.min(base, low[i]) - a[i] * cfg.slBuf;
       } else {
-        const base = cfg.slMode === 'Prev candle' ? high[i - 1] : cfg.slMode === 'Swing' ? highest(high, cfg.slLookback, i) : close[i] + a[i] * cfg.slAtrMult;
-        raw = cfg.slMode === 'ATR' ? base : Math.max(base, high[i]) + a[i] * cfg.slBuf;
+        const auto = cal?.stopAtr ? close[i] + a[i] * cal.stopAtr : null;
+        const base = cfg.slMode === 'Auto' ? (auto ?? highest(high, cfg.slLookback, i))
+          : cfg.slMode === 'Prev candle' ? high[i - 1]
+          : cfg.slMode === 'Swing' ? highest(high, cfg.slLookback, i)
+          : close[i] + a[i] * cfg.slAtrMult;
+        raw = (cfg.slMode === 'ATR' || (cfg.slMode === 'Auto' && auto)) ? base : Math.max(base, high[i]) + a[i] * cfg.slBuf;
       }
       entryP = close[i];
       const risk = Math.max(dir === 1 ? entryP - raw : raw - entryP, a[i] * cfg.minRiskAtr);
@@ -183,7 +200,16 @@ export function analyze(candles, userCfg = {}) {
       // The profile is built once, at entry, and kept for the life of the trade —
       // levels you mark going in are the levels you trade against.
       let tpSource;
-      if (cfg.tpMode === 'profile') {
+      if (cfg.runner) {
+        // TP1 banks a slice at the first volume shelf ahead; the rest has no
+        // ceiling and comes off via the trail. Capping at 2R throws away the
+        // moves that pay for everything else.
+        entryProf = buildProfile(candles, i, cfg);
+        const t = pickTargets(entryProf, entryP, dir, a[i] * cfg.minTpAtr, risk, cfg.fallbackRR);
+        tp1P = t.tp1;
+        tp2P = null;
+        tpSource = `${t.source.split(' → ')[0]} → runner`;
+      } else if (cfg.tpMode === 'profile') {
         entryProf = buildProfile(candles, i, cfg);
         const t = pickTargets(entryProf, entryP, dir, a[i] * cfg.minTpAtr, risk, cfg.fallbackRR);
         tp1P = t.tp1; tp2P = t.tp2; tpSource = t.source;
@@ -232,6 +258,18 @@ export function analyze(candles, userCfg = {}) {
 
   return {
     price: px,
+    calibration: cal && {
+      signals: cal.signals, worked: cal.worked, workRate: cal.workRate,
+      stopAtr: cal.stopAtr, stopPct: cal.stopAtr * (a[li] / px) * 100,
+      maeWinP80: cal.maeWinP80, mfeWinP50: cal.mfeWinP50, mfeWinP90: cal.mfeWinP90,
+      medianWinPct: cal.mfeWinP50 * (a[li] / px) * 100,
+      bigWinPct: cal.mfeWinP90 * (a[li] / px) * 100,
+      impliedR: cal.impliedR,
+      // A stop only exists if you survive to reach it. Past 100/stopPct× the
+      // liquidation price sits inside the stop, so the stop never fills.
+      liqLev: Math.floor(100 / (cal.stopAtr * (a[li] / px) * 100)),
+      safeLev: Math.max(1, Math.floor(40 / (cal.stopAtr * (a[li] / px) * 100)))
+    },
     profile: liveProf && {
       poc: liveProf.poc, vah: liveProf.vah, val: liveProf.val,
       hi: liveProf.hi, lo: liveProf.lo,

@@ -35,7 +35,7 @@ app.use('/api', (req, res, next) =>
 app.use(express.static(path.join(__dirname, 'public')));
 
 initPush();
-const feed = new Feed();
+const feed = new Feed(() => store.get().settings.cfg || {});
 const vol = new VolatilityScanner();
 
 // ─────────────── browser fan-out ───────────────
@@ -154,7 +154,7 @@ function startLowVolWatch() {
 function slimForUi(a) {
   return {
     price: a.price, rsi: a.rsi, atrPct: a.atrPct, volRatio: a.volRatio,
-    macdHist: a.macdHist, position: a.position, forecast: a.forecast, profile: a.profile,
+    macdHist: a.macdHist, position: a.position, forecast: a.forecast, profile: a.profile, calibration: a.calibration,
     stats: a.stats, recent: a.trades.slice(-10).reverse(), lastClosedTime: a.lastClosedTime
   };
 }
@@ -173,7 +173,7 @@ app.get('/api/watches', (_req, res) => res.json(feed.snapshot()));
 app.post('/api/watches', async (req, res) => {
   const { market, symbol, interval, cfg } = req.body || {};
   if (!market || !symbol || !interval) return res.status(400).json({ error: 'market, symbol, interval required' });
-  const w = store.addWatch({ market, symbol: symbol.toUpperCase(), interval, cfg: cfg || {} });
+  const w = store.addWatch({ market, symbol: symbol.toUpperCase(), interval, cfg: {} });
   if (!w) return res.status(409).json({ error: 'already watching that symbol + timeframe' });
   await feed.add(w);
   broadcast('watches', feed.snapshot());
@@ -222,10 +222,9 @@ app.get('/api/settings', (_req, res) => res.json(store.get().settings));
 app.post('/api/settings', (req, res) => {
   Object.assign(store.get().settings, req.body || {});
   store.save();
-  if (req.body && 'levOverride' in req.body) {
-    setOverrides(store.get().settings.levOverride || {});
-    broadcast('watches', feed.snapshot());
-  }
+  if (req.body && 'levOverride' in req.body) setOverrides(store.get().settings.levOverride || {});
+  if (req.body && 'cfg' in req.body) feed.reanalyzeAll();
+  broadcast('watches', feed.snapshot());
   broadcast('settings', store.get().settings);
   res.json(store.get().settings);
 });
@@ -259,6 +258,14 @@ server.listen(PORT, async () => {
   console.log(`  channels: telegram=${ch.telegram ? 'on' : 'off'}  ntfy=${ch.ntfy ? 'on' : 'off'}  webpush=${ch.webpush ? 'on' : 'off'}`);
   console.log(`  forex: ${process.env.TWELVEDATA_KEY ? 'on' : 'off (set TWELVEDATA_KEY)'}`);
   console.log(`  access: ${APP_KEY ? 'password protected' : 'OPEN (set APP_PASSWORD before exposing publicly)'}\n`);
+  // Older watches stored a full config snapshot, freezing them on the settings
+  // present when they were added. Drop those so live settings apply.
+  let migrated = 0;
+  for (const w of store.get().watches) {
+    if (w.cfg && Object.keys(w.cfg).length > 3) { w.cfg = {}; migrated++; }
+  }
+  if (migrated) { store.save(); console.log(`  migrated ${migrated} watch(es) to live settings`); }
+
   setOverrides(store.get().settings.levOverride || {});
   await refreshLeverage();
   console.log(`  leverage: ${levLoaded()} symbols via ${levSourceName()}`);

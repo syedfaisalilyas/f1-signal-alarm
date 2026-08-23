@@ -13,8 +13,12 @@ const ANALYZE_THROTTLE = 1500;
 const PREALERT_COOLDOWN = 10 * 60 * 1000;
 
 export class Feed extends EventEmitter {
-  constructor() {
+  // getGlobalCfg supplies the live settings. Watches keep only their own
+  // explicit overrides, so changing a setting reaches every existing symbol
+  // instead of only ones added afterwards.
+  constructor(getGlobalCfg = () => ({})) {
     super();
+    this.getGlobalCfg = getGlobalCfg;
     this.watches = new Map();     // id -> { watch, candles, last, marks }
     this.sockets = {};            // market -> ws
     this.pending = {};            // market -> desired stream set
@@ -61,7 +65,7 @@ export class Feed extends EventEmitter {
       entry.candles = await fetchCandles(watch.market, watch.symbol, watch.interval, MAX_BARS);
       entry.loading = false;
       // Seed marks from history so we don't fire alerts for signals that already happened
-      const a = analyze(entry.candles, watch.cfg);
+      const a = analyze(entry.candles, { ...this.getGlobalCfg(), ...(watch.cfg || {}) });
       if (a) {
         entry.last = a;
         entry.marks.entryTime = a.position ? a.position.entryTime : null;
@@ -91,6 +95,11 @@ export class Feed extends EventEmitter {
     if (!e) return;
     e.watch.cfg = cfg;
     this.run(e, true);
+  }
+
+  // Re-analyse everything after a settings change.
+  reanalyzeAll() {
+    for (const e of this.watches.values()) this.run(e, true);
   }
 
   // ── Binance WebSocket wiring ──
@@ -203,7 +212,7 @@ export class Feed extends EventEmitter {
     e.lastRun = now;
 
     let a;
-    try { a = analyze(e.candles, e.watch.cfg); }
+    try { a = analyze(e.candles, { ...this.getGlobalCfg(), ...(e.watch.cfg || {}) }); }
     catch (err) { e.error = err.message; return; }
     if (!a) return;
 
@@ -259,7 +268,7 @@ function slim(a) {
   return {
     price: a.price, rsi: a.rsi, atrPct: a.atrPct, volRatio: a.volRatio,
     emaFast: a.emaFast, emaSlow: a.emaSlow, macdHist: a.macdHist,
-    position: a.position, forecast: a.forecast, profile: a.profile, stats: a.stats,
+    position: a.position, forecast: a.forecast, profile: a.profile, calibration: a.calibration, stats: a.stats,
     recent: a.trades.slice(-10).reverse(),
     lastClosedTime: a.lastClosedTime
   };

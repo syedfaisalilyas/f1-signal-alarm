@@ -131,10 +131,9 @@ async function addWatch(s) {
   hideResults();
   $('#q').value = '';
   const interval = $('#tf').value;
-  const cfg = collectIndicatorCfg();
   const r = await api('/api/watches', {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ market: s.market, symbol: s.symbol, interval, cfg })
+    body: JSON.stringify({ market: s.market, symbol: s.symbol, interval })
   });
   if (!r.ok) {
     const e = await r.json();
@@ -246,6 +245,16 @@ function buildCard(w) {
       + `<span class="chip">ready ${f.readiness}%</span>`));
   }
 
+  if (a.calibration) {
+    const k = a.calibration, lev = w.maxLev;
+    const over = lev && lev > k.liqLev;
+    card.appendChild(el('div', 'calib', `
+      <div class="c1"><span>Stop ${k.stopPct.toFixed(2)}%</span>
+        <span class="dim">covers ${(state.settings.cfg?.autoCoverage ?? 0.85) * 100}% of winner pullbacks</span></div>
+      <div class="c2"><span>typical winner <b class="up">+${k.medianWinPct.toFixed(1)}%</b></span>
+        <span>big winner <b class="up">+${k.bigWinPct.toFixed(0)}%</b></span></div>
+      <div class="c3 ${over ? 'bad' : ''}">max survivable ${k.liqLev}x · comfortable ${k.safeLev}x${over ? ` — ${lev}x liquidates before the stop` : ''}</div>`));
+  }
   if (a.profile) card.appendChild(vaStrip(a.profile, a.price, p));
 
   card.appendChild(el('div', 'cfoot', `
@@ -556,6 +565,7 @@ function collectIndicatorCfg() {
     slMode: $('#c_slMode').value, slLookback: num('slLookback'), slBuf: num('slBuf'),
     beAtR: num('beAtR'), trailAfterR: num('trailAfterR'), trailAtr: num('trailAtr'),
     useTrail: bool('useTrail'), tp1Portion: num('tp1Portion') / 100,
+    runner: bool('runner'), autoCoverage: num('autoCoverage'),
     tpMode: $('#c_tpMode').value, vpLen: num('vpLen'), vpRows: num('vpRows'),
     vaPct: num('vaPct'), hvnThr: num('hvnThr'), minTpAtr: num('minTpAtr'), fallbackRR: num('fallbackRR'),
     maxBars: num('maxBars'), requireVol: bool('requireVol'), useTrend: bool('useTrend'),
@@ -568,7 +578,7 @@ function applySettingsToForm() {
   const set = (id, v) => { const n = $('#c_' + id); if (n) { if (n.type === 'checkbox') n.checked = !!v; else n.value = v; } };
   ['emaFast', 'emaSlow', 'rsiLen', 'rsiOB', 'rsiOS', 'atrLen', 'rr1', 'rr2', 'slLookback', 'slBuf', 'maxBars',
     'requireVol', 'useTrend', 'useRevExit', 'beAfterTp1', 'vpLen', 'vpRows', 'vaPct', 'hvnThr',
-    'minTpAtr', 'fallbackRR', 'beAtR', 'trailAfterR', 'trailAtr', 'useTrail'].forEach(k => set(k, s[k]));
+    'minTpAtr', 'fallbackRR', 'beAtR', 'trailAfterR', 'trailAtr', 'useTrail', 'runner', 'autoCoverage'].forEach(k => set(k, s[k]));
   set('tp1Portion', Math.round((s.tp1Portion ?? 0.5) * 100));
   $('#levOverride').value = Object.entries(state.settings.levOverride || {})
     .map(([k, v]) => `${k}=${v}`).join(', ');
