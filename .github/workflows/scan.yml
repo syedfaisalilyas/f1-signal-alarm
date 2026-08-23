@@ -9,6 +9,11 @@ on:
   schedule:
     - cron: '*/5 * * * *'
   workflow_dispatch:
+    inputs:
+      test:
+        description: 'Also send a test alert to Telegram'
+        type: boolean
+        default: false
 
 concurrency:
   group: scan
@@ -47,6 +52,26 @@ jobs:
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
           NTFY_TOPIC: ${{ secrets.NTFY_TOPIC }}
         run: node scan.js
+
+      # Signals are rare, so this is the way to confirm delivery still works
+      # without waiting for the market to give you one.
+      - name: Test alert
+        if: inputs.test
+        env:
+          TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: |
+          node -e '
+            const t = process.env.TELEGRAM_TOKEN, chat = process.env.TELEGRAM_CHAT_ID;
+            const text = "\u2705 <b>F1 Alarm</b> \u2014 cloud scanner is alive\nScanning every 5 min on GitHub Actions.";
+            fetch(`https://api.telegram.org/bot${t}/sendMessage`, {
+              method: "POST", headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ chat_id: chat, text, parse_mode: "HTML" })
+            }).then(async r => {
+              console.log("telegram", r.status, (await r.text()).slice(0, 120));
+              if (!r.ok) process.exit(1);
+            });
+          '
 
       - name: Publish state
         run: |
