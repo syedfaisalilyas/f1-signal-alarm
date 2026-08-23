@@ -14,6 +14,7 @@ export const DEFAULTS = {
   atrLen: 14, slMode: 'Swing', slLookback: 3, slAtrMult: 1.2,
   slBuf: 0.25, minRiskAtr: 0.35, rr1: 1.0, rr2: 2.0,
   useRevExit: true, revOnlyInProfit: true, beAfterTp1: true, maxBars: 40,
+  tp1Portion: 0.5,          // fraction of the position banked at TP1
   preAlertPct: 0.35,        // warn when price is this % from the trigger
   preAlertBars: 3,          // ...or when the cross is this many bars away
   ...VP_DEFAULTS            // tpMode, vpLen, vpRows, vaPct, hvnThr, minTpAtr, fallbackRR
@@ -115,9 +116,19 @@ export function analyze(candles, userCfg = {}) {
     }
 
     if (exitPx !== null) {
-      const rMult = pos === 1 ? (exitPx - entryP) / (entryP - slInit) : (entryP - exitPx) / (slInit - entryP);
-      const pnlPct = ((pos === 1 ? exitPx - entryP : entryP - exitPx) / entryP) * 100;
-      trades.push({ ...openTrade, exitBar: i, exitTime: candles[i].t, exitPrice: exitPx, reason: exitTag, r: rMult, pnlPct });
+      const rAt = px => pos === 1 ? (px - entryP) / (entryP - slInit) : (entryP - px) / (slInit - entryP);
+      const pctAt = px => ((pos === 1 ? px - entryP : entryP - px) / entryP) * 100;
+      // TP1 takes a slice off the table, so only the remainder rides to the final
+      // exit. Without this, a stop that trailed to breakeven after TP1 books 0R —
+      // which reports a trade that actually banked profit as a scratch.
+      const part = tp1Done ? Math.min(1, Math.max(0, cfg.tp1Portion)) : 0;
+      const rMult = part * rAt(tp1P) + (1 - part) * rAt(exitPx);
+      const pnlPct = part * pctAt(tp1P) + (1 - part) * pctAt(exitPx);
+      trades.push({
+        ...openTrade, exitBar: i, exitTime: candles[i].t, exitPrice: exitPx, reason: exitTag,
+        r: rMult, pnlPct, tp1Filled: tp1Done, tp1Portion: part,
+        rFinalLeg: rAt(exitPx), pctFinalLeg: pctAt(exitPx)
+      });
       pos = 0; tp1Done = false; lastExit = i; openTrade = null;
     }
 
@@ -165,11 +176,14 @@ export function analyze(candles, userCfg = {}) {
 
   const li = lastClosed;
   const px = close[n - 1];
+  const livePart = pos !== 0 && tp1Done ? Math.min(1, Math.max(0, cfg.tp1Portion)) : 0;
+  const liveRAt = p2 => pos === 1 ? (p2 - entryP) / (entryP - slInit) : (entryP - p2) / (slInit - entryP);
+  const livePctAt = p2 => ((pos === 1 ? p2 - entryP : entryP - p2) / entryP) * 100;
   const position = pos !== 0 ? {
-    ...openTrade, sl: slP, tp1: tp1P, tp2: tp2P, tp1Done,
+    ...openTrade, sl: slP, tp1: tp1P, tp2: tp2P, tp1Done, tp1Portion: livePart,
     barsHeld: li - entryBar,
-    livePnlPct: ((pos === 1 ? px - entryP : entryP - px) / entryP) * 100,
-    liveR: pos === 1 ? (px - entryP) / (entryP - slInit) : (entryP - px) / (slInit - entryP)
+    livePnlPct: livePart * livePctAt(tp1P) + (1 - livePart) * livePctAt(px),
+    liveR: livePart * liveRAt(tp1P) + (1 - livePart) * liveRAt(px)
   } : null;
 
   const wins = trades.filter(t => t.r >= 0).length;

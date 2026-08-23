@@ -156,8 +156,9 @@ function buildCard(w) {
   if (p) card.classList.add(p.side === 'LONG' ? 'long' : 'short');
   else if (f?.imminent) card.classList.add('forming');
 
-  const mtag = w.market === 'futures' ? '<span class="tag fut">perp</span>'
-    : w.market === 'forex' ? '<span class="tag fx">fx</span>' : '';
+  const mtag = (w.market === 'futures' ? '<span class="tag fut">perp</span>'
+    : w.market === 'forex' ? '<span class="tag fx">fx</span>' : '')
+    + (w.maxLev ? `<span class="tag lev">${w.maxLev}x max</span>` : '');
 
   const head = el('div', 'chead', `
     <div class="sym"><b>${w.symbol}</b><span class="iv">${w.interval}</span>${mtag}</div>`);
@@ -181,11 +182,16 @@ function buildCard(w) {
     // ── open position: levels + progress between SL and TP2 ──
     const lo = Math.min(p.sl, p.tp2), hi = Math.max(p.sl, p.tp2);
     const prog = Math.max(0, Math.min(100, ((a.price - lo) / (hi - lo)) * 100));
+    const lev = w.maxLev;
+    const mv = v => Math.abs(v - p.entryPrice) / p.entryPrice * 100;
+    const lx = (pct, sign) => lev
+      ? `<em>${sign}${pct.toFixed(2)}%</em><b>${sign}${(pct * lev).toFixed(0)}%</b>`
+      : `<em>${sign}${pct.toFixed(2)}%</em>`;
     const lvls = el('div', 'levels', `
-      <div class="lv tp"><span>TP2 · ${w.cfg?.rr2 ?? state.defaults.rr2 ?? 2}R</span><span>${fmtPx(p.tp2)}</span></div>
-      <div class="lv tp" style="opacity:.75"><span>TP1${p.tp1Done ? ' ✓ hit' : ''}</span><span>${fmtPx(p.tp1)}</span></div>
-      <div class="lv en"><span>Entry</span><span>${fmtPx(p.entryPrice)}</span></div>
-      <div class="lv sl"><span>SL${p.tp1Done ? ' → BE' : ''}</span><span>${fmtPx(p.sl)}</span></div>`);
+      <div class="lv tp"><span>TP2</span><span class="lvv">${lx(mv(p.tp2), '+')}${fmtPx(p.tp2)}</span></div>
+      <div class="lv tp" style="opacity:.8"><span>TP1${p.tp1Done ? ' ✓ hit' : ''}</span><span class="lvv">${lx(mv(p.tp1), '+')}${fmtPx(p.tp1)}</span></div>
+      <div class="lv en"><span>Entry</span><span class="lvv">${fmtPx(p.entryPrice)}</span></div>
+      <div class="lv sl"><span>SL${p.tp1Done ? ' → BE' : ''}</span><span class="lvv">${lx(p.riskPct, '-')}${fmtPx(p.sl)}</span></div>`);
     if (p.tpSource) card.appendChild(el('div', 'tpsrc', `target from <b>${p.tpSource}</b>`));
     card.appendChild(lvls);
     const meter = el('div', 'meter');
@@ -195,10 +201,15 @@ function buildCard(w) {
     meter.appendChild(bar);
     card.appendChild(meter);
     const pnlCls = p.livePnlPct >= 0 ? 'up' : 'down';
+    const levPnl = lev ? ` · <b>${pct(p.livePnlPct * lev)}</b> @${lev}x` : '';
     card.appendChild(el('div', 'trigger', `
       <div class="t1"><span class="dim">Live P&L</span>
-        <span class="${pnlCls}">${pct(p.livePnlPct)} · ${p.liveR >= 0 ? '+' : ''}${p.liveR.toFixed(2)}R</span></div>
-      <div class="t2"><span>held ${p.barsHeld} bars</span><span>risk ${p.riskPct.toFixed(2)}%</span></div>`));
+        <span class="${pnlCls}">${pct(p.livePnlPct)} · ${p.liveR >= 0 ? '+' : ''}${p.liveR.toFixed(2)}R${levPnl}</span></div>
+      <div class="t2"><span>held ${p.barsHeld} bars${p.tp1Done ? ` · TP1 banked ${Math.round(p.tp1Portion * 100)}%` : ''}</span>
+        <span>risk ${p.riskPct.toFixed(2)}%</span></div>`));
+    if (lev && p.riskPct * lev >= 50)
+      card.appendChild(el('div', 'liqwarn',
+        `⚠ at ${lev}x the stop costs ${(p.riskPct * lev).toFixed(0)}% of margin · liquidation ≈ ${(100 / lev).toFixed(1)}% move`));
   } else if (f) {
     // ── flat: how far to the trigger ──
     const dir = f.distancePct > 0 ? 'up' : 'down';

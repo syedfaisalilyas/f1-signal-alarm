@@ -6,6 +6,7 @@ import WebSocket from 'ws';
 import { WS_URL, fetchCandles } from './providers.js';
 import { analyze } from './strategy.js';
 import { intervalMin } from './notify.js';
+import { maxLev } from './leverage.js';
 
 const MAX_BARS = 600;
 const ANALYZE_THROTTLE = 1500;
@@ -63,8 +64,8 @@ export class Feed extends EventEmitter {
       const a = analyze(entry.candles, watch.cfg);
       if (a) {
         entry.last = a;
-        entry.marks.entryBar = a.position ? a.position.entryBar : null;
-        entry.marks.exitBar = a.trades.length ? a.trades[a.trades.length - 1].exitBar : null;
+        entry.marks.entryTime = a.position ? a.position.entryTime : null;
+        entry.marks.exitTime = a.trades.length ? a.trades[a.trades.length - 1].exitTime : null;
         this.emit('update', watch.id, a);
       }
     } catch (e) {
@@ -210,18 +211,21 @@ export class Feed extends EventEmitter {
     e.last = a;
     e.error = null;
 
+    // Bar indices shift whenever the candle array rolls or a REST poll replaces
+    // it with a different window, so trades are identified by their candle
+    // timestamp instead — otherwise the same exit alerts twice.
     // ENTRY — a position opened on the newest closed bar
-    if (a.position && a.position.entryBar === a.lastClosedBar && e.marks.entryBar !== a.position.entryBar) {
-      e.marks.entryBar = a.position.entryBar;
+    if (a.position && a.position.entryBar === a.lastClosedBar && e.marks.entryTime !== a.position.entryTime) {
+      e.marks.entryTime = a.position.entryTime;
       e.marks.preAlertAt = 0;
       this.emit('signal', 'ENTRY', e.watch, a);
     }
-    if (a.position) e.marks.entryBar = a.position.entryBar;
+    if (a.position) e.marks.entryTime = a.position.entryTime;
 
     // EXIT — a trade closed on the newest closed bar
     const lastTrade = a.trades[a.trades.length - 1];
-    if (lastTrade && lastTrade.exitBar === a.lastClosedBar && e.marks.exitBar !== lastTrade.exitBar) {
-      e.marks.exitBar = lastTrade.exitBar;
+    if (lastTrade && lastTrade.exitBar === a.lastClosedBar && e.marks.exitTime !== lastTrade.exitTime) {
+      e.marks.exitTime = lastTrade.exitTime;
       this.emit('signal', 'EXIT', e.watch, { ...a, justClosed: lastTrade });
     }
 
@@ -244,6 +248,7 @@ export class Feed extends EventEmitter {
     return [...this.watches.values()].map(e => ({
       ...e.watch,
       loading: e.loading, error: e.error,
+      maxLev: maxLev(e.watch.market, e.watch.symbol),
       source: e.watch.market === 'forex' ? 'poll' : e.streamDead ? 'poll (stream blocked)' : 'stream',
       analysis: e.last ? slim(e.last) : null
     }));

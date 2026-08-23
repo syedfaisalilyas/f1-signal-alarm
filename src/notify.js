@@ -1,5 +1,6 @@
 // Phone delivery: Telegram, ntfy, Web Push. All optional, all fire in parallel.
 import webpush from 'web-push';
+import { maxLev } from './leverage.js';
 
 let pushReady = false;
 export function initPush() {
@@ -73,11 +74,23 @@ export function buildMessage(kind, w, a) {
     const p = a.position;
     const arrow = p.side === 'LONG' ? '🚀' : '🔻';
     const title = `${arrow} ${p.side} ${w.symbol} ${w.interval}`;
+    const lev = maxLev(w.market, w.symbol);
+    const tp1Pct = Math.abs(p.tp1 - p.entryPrice) / p.entryPrice * 100;
+    const tp2Pct = Math.abs(p.tp2 - p.entryPrice) / p.entryPrice * 100;
+    const L = (pct, sign) => lev
+      ? `${sign}${pct.toFixed(2)}%  →  ${sign}${(pct * lev).toFixed(1)}% @${lev}x`
+      : `${sign}${pct.toFixed(2)}%`;
+    // At L× leverage an adverse move of 100/L% is liquidation. If the stop sits
+    // near that, max leverage means the stop and the liquidation are the same
+    // event — worth saying out loud rather than only printing a bigger number.
+    const liqMove = lev ? 100 / lev : null;
+    const risky = lev && p.riskPct * lev >= 50;
     const body =
       `Entry  ${fmt(p.entryPrice)}\n` +
-      `TP1    ${fmt(p.tp1)}  (+${(Math.abs(p.tp1 - p.entryPrice) / p.entryPrice * 100).toFixed(2)}%)\n` +
-      `TP2    ${fmt(p.tp2)}  (+${(Math.abs(p.tp2 - p.entryPrice) / p.entryPrice * 100).toFixed(2)}%)\n` +
-      `SL     ${fmt(p.sl)}  (-${p.riskPct.toFixed(2)}%)\n` +
+      `TP1    ${fmt(p.tp1)}   ${L(tp1Pct, '+')}\n` +
+      `TP2    ${fmt(p.tp2)}   ${L(tp2Pct, '+')}\n` +
+      `SL     ${fmt(p.sl)}   ${L(p.riskPct, '-')}\n` +
+      (risky ? `⚠ at ${lev}x the stop costs ${(p.riskPct * lev).toFixed(0)}% of margin (liq ≈ ${liqMove.toFixed(1)}% move)\n` : '') +
       (p.tpSource ? `target ${p.tpSource}\n` : '') +
       (a.profile ? `POC ${fmt(a.profile.poc)} · VA ${fmt(a.profile.val)}-${fmt(a.profile.vah)}\n` : '') +
       `RSI ${a.rsi.toFixed(1)} · ATR ${a.atrPct.toFixed(2)}% · Vol ${a.volRatio.toFixed(2)}x` +
@@ -125,11 +138,15 @@ export function buildMessage(kind, w, a) {
   if (kind === 'EXIT') {
     const t = a.justClosed;
     const good = t.r >= 0;
+    const lev = maxLev(w.market, w.symbol);
     const title = `${good ? '✅' : '🛑'} ${t.reason} — ${w.symbol} ${w.interval}`;
+    const sign = t.pnlPct >= 0 ? '+' : '';
     const body =
       `Closed ${t.side} @ ${fmt(t.exitPrice)}\n` +
       `From   ${fmt(t.entryPrice)}\n` +
-      `Result ${t.r >= 0 ? '+' : ''}${t.r.toFixed(2)}R  (${t.pnlPct >= 0 ? '+' : ''}${t.pnlPct.toFixed(2)}%)`;
+      (t.tp1Filled ? `TP1 banked ${Math.round(t.tp1Portion * 100)}% @ ${fmt(t.tp1)}\n` : '') +
+      `Result ${t.r >= 0 ? '+' : ''}${t.r.toFixed(2)}R  (${sign}${t.pnlPct.toFixed(2)}%` +
+      (lev ? `  →  ${sign}${(t.pnlPct * lev).toFixed(1)}% @${lev}x)` : ')');
     return {
       title, body,
       telegram: `<b>${good ? '✅' : '🛑'} ${t.reason} — ${sym}${mk}</b>\n<pre>${body}</pre>`,

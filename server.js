@@ -11,6 +11,7 @@ import { searchSymbols, ticker24h } from './src/providers.js';
 import { initPush, channelStatus, buildMessage, dispatch } from './src/notify.js';
 import { DEFAULTS } from './src/strategy.js';
 import { VolatilityScanner } from './src/volatility.js';
+import { refresh as refreshLeverage, loaded as levLoaded } from './src/leverage.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const app = express();
@@ -240,6 +241,10 @@ server.listen(PORT, async () => {
   console.log(`  channels: telegram=${ch.telegram ? 'on' : 'off'}  ntfy=${ch.ntfy ? 'on' : 'off'}  webpush=${ch.webpush ? 'on' : 'off'}`);
   console.log(`  forex: ${process.env.TWELVEDATA_KEY ? 'on' : 'off (set TWELVEDATA_KEY)'}`);
   console.log(`  access: ${APP_KEY ? 'password protected' : 'OPEN (set APP_PASSWORD before exposing publicly)'}\n`);
+  await refreshLeverage();
+  console.log(`  leverage: ${levLoaded()} symbols loaded`);
+  setInterval(refreshLeverage, 12 * 60 * 60 * 1000).unref();
+
   const watches = store.get().watches;
   for (const w of watches) await feed.add(w);
   feed.startWatchdog();
