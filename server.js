@@ -44,7 +44,21 @@ function broadcast(type, payload) {
   for (const c of wss.clients) if (c.readyState === 1) c.send(msg);
 }
 
+// Cloudflare drops idle websockets, which showed up in the UI as an endless
+// "reconnecting…". A periodic ping keeps them open.
+const heartbeat = setInterval(() => {
+  for (const c of wss.clients) {
+    if (c.readyState !== 1) continue;
+    if (c.isAlive === false) { c.terminate(); continue; }
+    c.isAlive = false;
+    try { c.ping(); } catch {}
+  }
+}, 25000);
+heartbeat.unref?.();
+
 wss.on('connection', (ws, req) => {
+  ws.isAlive = true;
+  ws.on('pong', () => { ws.isAlive = true; });
   if (APP_KEY) {
     const key = new URL(req.url, 'http://x').searchParams.get('key');
     if (key !== APP_KEY) return ws.close(4001, 'unauthorized');
@@ -141,7 +155,7 @@ function slimForUi(a) {
   return {
     price: a.price, rsi: a.rsi, atrPct: a.atrPct, volRatio: a.volRatio,
     macdHist: a.macdHist, position: a.position, forecast: a.forecast, profile: a.profile,
-    stats: a.stats, recent: a.trades.slice(-8).reverse(), lastClosedTime: a.lastClosedTime
+    stats: a.stats, recent: a.trades.slice(-10).reverse(), lastClosedTime: a.lastClosedTime
   };
 }
 
@@ -249,5 +263,10 @@ server.listen(PORT, async () => {
   for (const w of watches) await feed.add(w);
   feed.startWatchdog();
   startLowVolWatch();
+
+  // Warm the board so the first browser request is served from cache instead of
+  // waiting on a full market scan behind the tunnel.
+  vol.board('futures', []).then(r => console.log(`  volatility: ${r.length} coins pre-scanned`))
+     .catch(e => console.log('  volatility: pre-scan failed —', e.message));
   if (watches.length) console.log(`  restored ${watches.length} watch(es)\n`);
 });

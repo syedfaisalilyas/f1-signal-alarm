@@ -260,7 +260,7 @@ function slim(a) {
     price: a.price, rsi: a.rsi, atrPct: a.atrPct, volRatio: a.volRatio,
     emaFast: a.emaFast, emaSlow: a.emaSlow, macdHist: a.macdHist,
     position: a.position, forecast: a.forecast, profile: a.profile, stats: a.stats,
-    recent: a.trades.slice(-8).reverse(),
+    recent: a.trades.slice(-10).reverse(),
     lastClosedTime: a.lastClosedTime
   };
 }

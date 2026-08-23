@@ -37,6 +37,19 @@ async function api(path, opts = {}) {
   return r;
 }
 
+// The tunnel returns an HTML error page on a hiccup, and r.json() then throws
+// "The string did not match the expected pattern" — useless on screen. Read the
+// body once and say what actually happened.
+async function apiJson(path, opts) {
+  const r = await api(path, opts);
+  const text = await r.text();
+  try { return JSON.parse(text); }
+  catch {
+    const snippet = text.trim().slice(0, 60).replace(/\s+/g, ' ');
+    throw new Error(r.ok ? `bad response (${snippet}…)` : `HTTP ${r.status} — connection dropped, retrying`);
+  }
+}
+
 // ─────────── websocket ───────────
 function connect() {
   const proto = location.protocol === 'https:' ? 'wss' : 'ws';
@@ -163,9 +176,12 @@ function buildCard(w) {
   const head = el('div', 'chead', `
     <div class="sym"><b>${w.symbol}</b><span class="iv">${w.interval}</span>${mtag}</div>`);
   const x = el('button', 'x', '✕');
-  x.onclick = () => removeWatch(w.id);
+  x.onclick = e => { e.stopPropagation(); removeWatch(w.id); };
   head.appendChild(x);
   card.appendChild(head);
+
+  card.onclick = () => openHistory(w.id);
+  card.style.cursor = 'pointer';
 
   if (w.loading) { card.appendChild(el('div', 'dim', 'loading history…')); return card; }
   if (w.error) { card.appendChild(el('div', 'err', w.error)); return card; }
@@ -279,6 +295,57 @@ function vaStrip(prof, price, pos) {
   return wrap;
 }
 
+// ─────────── trade history ───────────
+function openHistory(id) {
+  const w = state.watches.find(x => x.id === id);
+  if (!w?.analysis) return;
+  const a = w.analysis, lev = w.maxLev, trades = a.recent || [];
+
+  $('#histTitle').textContent = `${w.symbol} ${w.interval}`;
+  $('#histSub').innerHTML = lev ? `<span class="tag lev">${lev}x max</span>` : '';
+
+  const s2 = a.stats;
+  const sumPct = trades.reduce((t, x) => t + x.pnlPct, 0);
+  const sgn = v => (v >= 0 ? '+' : '') + v;
+  $('#histStats').innerHTML = [
+    ['Trades', String(s2.trades)],
+    ['Win rate', s2.winRate.toFixed(0) + '%'],
+    ['Total R', sgn(s2.totalR.toFixed(2)) + 'R'],
+    ['Avg R', sgn(s2.avgR.toFixed(2)) + 'R'],
+    ...(lev ? [[`Last ${trades.length} @${lev}x`, sgn((sumPct * lev).toFixed(1)) + '%']] : [])
+  ].map(([k, v]) => `<div class="hstat"><span>${k}</span><b class="${v.startsWith('-') ? 'down' : 'up'}">${v}</b></div>`).join('');
+
+  const body = $('#histRows');
+  body.innerHTML = '';
+  if (!trades.length) {
+    body.innerHTML = '<div class="hempty">No closed trades yet in the loaded history.</div>';
+  } else {
+    for (const t of trades) {
+      const good = t.r >= 0;
+      const when = new Date(t.exitTime).toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+      const levPnl = lev ? `<span class="hlev ${good ? 'up' : 'down'}">${t.pnlPct >= 0 ? '+' : ''}${(t.pnlPct * lev).toFixed(1)}% @${lev}x</span>` : '';
+      body.appendChild(el('div', 'hrow ' + (good ? 'win' : 'loss'), `
+        <div class="hr1">
+          <span class="hside ${t.side === 'LONG' ? 'up' : 'down'}">${t.side === 'LONG' ? '▲' : '▼'} ${t.side}</span>
+          <span class="hreason">${t.reason}</span>
+          <span class="hr ${good ? 'up' : 'down'}">${good ? '+' : ''}${t.r.toFixed(2)}R</span>
+        </div>
+        <div class="hr2">
+          <span>${fmtPx(t.entryPrice)} → ${fmtPx(t.exitPrice)}</span>
+          <span class="${good ? 'up' : 'down'}">${t.pnlPct >= 0 ? '+' : ''}${t.pnlPct.toFixed(2)}%</span>
+          ${levPnl}
+        </div>
+        <div class="hr3">
+          <span>${when}</span>
+          <span>${t.tpSource || ''}${t.tp1Filled ? ` · TP1 banked ${Math.round(t.tp1Portion * 100)}%` : ''}</span>
+        </div>`));
+    }
+  }
+  $('#histModal').classList.remove('hidden');
+}
+$('#histClose').onclick = () => $('#histModal').classList.add('hidden');
+$('#histModal').onclick = e => { if (e.target.id === 'histModal') $('#histModal').classList.add('hidden'); };
+
 // ─────────── alerts in-page ───────────
 function onAlert(entry) {
   prependLog(entry);
@@ -318,8 +385,7 @@ async function loadVol() {
   const market = $('#volMarket').value, limit = $('#volLimit').value;
   $('#volFoot').textContent = 'scanning…';
   try {
-    const r = await api(`/api/volatility?market=${market}&limit=${limit}`);
-    const d = await r.json();
+    const d = await apiJson(`/api/volatility?market=${market}&limit=${limit}`);
     if (d.error) throw new Error(d.error);
     volData = d.rows;
     renderVol();
@@ -371,8 +437,7 @@ $('#volSearch').addEventListener('input', e => {
   volSearchTimer = setTimeout(async () => {
     const sym = q.endsWith('USDT') || q.includes('/') ? q : q + 'USDT';
     try {
-      const r = await api(`/api/volatility/lookup?market=${$('#volMarket').value}&symbol=${encodeURIComponent(sym)}`);
-      const d = await r.json();
+      const d = await apiJson(`/api/volatility/lookup?market=${$('#volMarket').value}&symbol=${encodeURIComponent(sym)}`);
       if (d.error) { volLookupRow = null; $('#volFoot').textContent = `${sym}: ${d.error}`; renderVol(); return; }
       volLookupRow = { ...d, pinned: state.watches.some(w => w.symbol === d.symbol) };
       renderVol();

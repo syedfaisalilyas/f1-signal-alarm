@@ -207,3 +207,22 @@ main{max-width:1400px;margin:0 auto;padding:0 16px}
 .lv.tp .lvv b{color:var(--up)} .lv.sl .lvv b{color:var(--down)}
 .liqwarn{font-size:11px;color:var(--warn);background:rgba(255,176,46,.09);
   border:1px solid rgba(255,176,46,.25);border-radius:8px;padding:7px 9px;margin-top:8px;line-height:1.45}
+
+/* ── trade history ── */
+.hstats{display:grid;grid-template-columns:repeat(auto-fit,minmax(88px,1fr));gap:8px;margin-bottom:4px}
+.hstat{background:var(--panel2);border-radius:10px;padding:9px 11px;display:grid;gap:2px}
+.hstat span{font-size:10px;color:var(--dim);text-transform:uppercase;letter-spacing:.05em}
+.hstat b{font-size:15px;font-variant-numeric:tabular-nums}
+.hrows{display:grid;gap:7px}
+.hrow{background:var(--panel2);border-radius:10px;padding:10px 12px;border-left:3px solid var(--faint);
+  font-variant-numeric:tabular-nums}
+.hrow.win{border-left-color:var(--up)} .hrow.loss{border-left-color:var(--down)}
+.hr1{display:flex;align-items:center;gap:9px;font-size:13px}
+.hside{font-weight:650;font-size:12px}
+.hreason{font-size:10px;color:var(--dim);text-transform:uppercase;letter-spacing:.05em;
+  background:var(--panel);padding:2px 7px;border-radius:6px}
+.hr1 .hr{margin-left:auto;font-weight:680;font-size:14px}
+.hr2{display:flex;gap:10px;align-items:baseline;font-size:12px;color:var(--dim);margin-top:4px}
+.hr2 .hlev{margin-left:auto;font-size:11px;font-weight:600}
+.hr3{display:flex;justify-content:space-between;gap:10px;font-size:10px;color:var(--faint);margin-top:4px}
+.hempty{color:var(--dim);font-size:13px;text-align:center;padding:22px}
