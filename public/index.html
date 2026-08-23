@@ -158,6 +158,10 @@
     </div>
     <label class="row"><span>Trail the stop behind price</span><input type="checkbox" id="c_useTrail" checked></label>
     <label class="row"><span>Runner (no fixed TP2 — let winners run)</span><input type="checkbox" id="c_runner" checked></label>
+    <label class="row"><span>No stop loss — hold until the trail arms or the signal flips</span><input type="checkbox" id="c_noStop"></label>
+    <p class="hint">Tested over 276 trades: raises win rate 66% → 79% and R +20.6 → +24.5, but the
+       sum of actual price moved goes <b>+31.1% → −16.9%</b> — it wins small and often, loses big and rarely.
+       One trade sat 30.7% underwater, which liquidates above 3x. Off by default.</p>
     <label class="row"><span>Stop must clear this % of winners' pullbacks</span><input type="number" id="c_autoCoverage" step="0.05" min="0.5" max="0.99" value="0.85"></label>
 
     <h4>Only trade when volatile</h4>

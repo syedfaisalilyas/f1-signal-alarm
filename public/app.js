@@ -594,7 +594,7 @@ function collectIndicatorCfg() {
     slMode: $('#c_slMode').value, slLookback: num('slLookback'), slBuf: num('slBuf'),
     beAtR: num('beAtR'), trailAfterR: num('trailAfterR'), trailAtr: num('trailAtr'),
     useTrail: bool('useTrail'), tp1Portion: num('tp1Portion') / 100,
-    runner: bool('runner'), autoCoverage: num('autoCoverage'),
+    runner: bool('runner'), noStop: bool('noStop'), autoCoverage: num('autoCoverage'),
     minVol1h: num('minVol1h'), minVol1d: num('minVol1d'), tp1AtR: num('tp1AtR'),
     tpMode: $('#c_tpMode').value, vpLen: num('vpLen'), vpRows: num('vpRows'),
     vaPct: num('vaPct'), hvnThr: num('hvnThr'), minTpAtr: num('minTpAtr'), fallbackRR: num('fallbackRR'),
@@ -609,7 +609,7 @@ function applySettingsToForm() {
   ['emaFast', 'emaSlow', 'rsiLen', 'rsiOB', 'rsiOS', 'atrLen', 'rr1', 'rr2', 'slLookback', 'slBuf', 'maxBars',
     'requireVol', 'useTrend', 'useRevExit', 'beAfterTp1', 'vpLen', 'vpRows', 'vaPct', 'hvnThr',
     'minTpAtr', 'fallbackRR', 'beAtR', 'trailAfterR', 'trailAtr', 'useTrail', 'runner', 'autoCoverage',
-    'minVol1h', 'minVol1d', 'tp1AtR'].forEach(k => set(k, s[k]));
+    'minVol1h', 'minVol1d', 'tp1AtR', 'noStop'].forEach(k => set(k, s[k]));
   set('tp1Portion', Math.round((s.tp1Portion ?? 0.5) * 100));
   $('#levOverride').value = Object.entries(state.settings.levOverride || {})
     .map(([k, v]) => `${k}=${v}`).join(', ');
