@@ -18,6 +18,8 @@ jobs:
   scan:
     runs-on: ubuntu-latest
     timeout-minutes: 8
+    permissions:
+      contents: write        # force-pushes the state branch
     steps:
       - uses: actions/checkout@v4
 
