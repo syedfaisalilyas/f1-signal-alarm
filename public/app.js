@@ -305,61 +305,89 @@ function vaStrip(prof, price, pos) {
 }
 
 // ─────────── trade history ───────────
-function openHistory(id) {
+let histId = null;
+
+async function openHistory(id) {
   const w = state.watches.find(x => x.id === id);
-  if (!w?.analysis) return;
-  const a = w.analysis, lev = w.maxLev, trades = a.recent || [];
-
+  if (!w) return;
+  histId = id;
   $('#histTitle').textContent = `${w.symbol} ${w.interval}`;
-  $('#histSub').innerHTML = lev ? `<span class="tag lev">${lev}x max</span>` : '';
+  $('#histSub').innerHTML = w.maxLev ? `<span class="tag lev">${w.maxLev}x max</span>` : '';
+  $('#histModal').classList.remove('hidden');
+  loadHistory();
+}
 
-  const s2 = a.stats;
-  const sumPct = trades.reduce((t, x) => t + x.pnlPct, 0);
-  const sgn = v => (v >= 0 ? '+' : '') + v;
+async function loadHistory() {
+  if (!histId) return;
+  const w = state.watches.find(x => x.id === histId);
+  const limit = $('#histLimit').value, minVol = $('#histVol').value;
+  $('#histMeta').textContent = 'scanning history…';
+  $('#histRows').innerHTML = '';
+  $('#histStats').innerHTML = '';
+  try {
+    const d = await apiJson(`/api/history/${encodeURIComponent(histId)}?limit=${limit}&minVol1h=${minVol}`);
+    if (d.error) throw new Error(d.error);
+    renderHistory(d, w?.maxLev);
+  } catch (e) {
+    $('#histMeta').textContent = 'could not load history: ' + e.message;
+  }
+}
+$('#histLimit').onchange = loadHistory;
+$('#histVol').onchange = loadHistory;
+
+function renderHistory(d, lev) {
+  const s2 = d.stats, trades = d.rows;
+  const sgn = v => (Number(v) >= 0 ? '+' : '') + v;
   $('#histStats').innerHTML = [
     ['Trades', String(s2.trades)],
     ['Win rate', s2.winRate.toFixed(0) + '%'],
-    ['Closed green', (s2.greenRate ?? s2.winRate).toFixed(0) + '%'],
     ['Total R', sgn(s2.totalR.toFixed(2)) + 'R'],
     ['Avg R', sgn(s2.avgR.toFixed(2)) + 'R'],
-    ...(lev ? [[`Last ${trades.length} @${lev}x`, sgn((sumPct * lev).toFixed(1)) + '%']] : [])
+    ['Sum move', sgn(s2.totalPct.toFixed(1)) + '%'],
+    ...(lev ? [[`At ${lev}x`, sgn((s2.totalPct * lev).toFixed(0)) + '%']] : [])
   ].map(([k, v]) => `<div class="hstat"><span>${k}</span><b class="${v.startsWith('-') ? 'down' : 'up'}">${v}</b></div>`).join('');
+
+  const filt = $('#histVol').value;
+  $('#histMeta').innerHTML =
+    `scanned ${d.barsScanned.toLocaleString()} candles · ${d.totalTrades} trades found` +
+    (filt > 0 ? ` · <b>${d.matched}</b> while 1H range ≥ ${filt}%` : '') +
+    ` · showing ${trades.length}`;
 
   const body = $('#histRows');
   body.innerHTML = '';
   if (!trades.length) {
-    body.innerHTML = '<div class="hempty">No closed trades yet in the loaded history.</div>';
-  } else {
-    for (const t of trades) {
-      const good = t.r >= 0;
-      const when = new Date(t.exitTime).toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
-      const levPnl = lev ? `<span class="hlev ${good ? 'up' : 'down'}">${t.pnlPct >= 0 ? '+' : ''}${(t.pnlPct * lev).toFixed(1)}% @${lev}x</span>` : '';
-      const hit = `<span class="tgt ${t.tp1Hit ? 'on' : ''}">TP1</span><span class="tgt ${t.tp2Hit ? 'on' : ''}">TP2</span>` +
-                  `<span class="tgt ${t.r < 0 ? 'bad' : ''}">SL</span>`;
-      const peak = t.peakR > t.r + 0.05
-        ? `<span class="hpeak">peaked +${t.peakR.toFixed(2)}R · gave back ${t.gaveBack.toFixed(2)}R</span>` : '';
-      body.appendChild(el('div', 'hrow ' + (good ? 'win' : 'loss'), `
-        <div class="hr1">
-          <span class="hside ${t.side === 'LONG' ? 'up' : 'down'}">${t.side === 'LONG' ? '▲' : '▼'} ${t.side}</span>
-          <span class="hreason">${t.reason}</span>
-          <span class="hr ${good ? 'up' : 'down'}">${good ? '+' : ''}${t.r.toFixed(2)}R</span>
-        </div>
-        <div class="htgts">${hit}${peak}</div>
-        <div class="hr2">
-          <span>${fmtPx(t.entryPrice)} → ${fmtPx(t.exitPrice)}</span>
-          <span class="${good ? 'up' : 'down'}">${t.pnlPct >= 0 ? '+' : ''}${t.pnlPct.toFixed(2)}%</span>
-          ${levPnl}
-        </div>
-        <div class="hr3">
-          <span>${when}</span>
-          <span>${t.tpSource || ''}${t.tp1Filled ? ` · TP1 banked ${Math.round(t.tp1Portion * 100)}%` : ''}</span>
-        </div>`));
-    }
+    body.innerHTML = '<div class="hempty">No trades match that filter.</div>';
+    return;
   }
-  $('#histModal').classList.remove('hidden');
+  for (const t of trades) {
+    const good = t.r >= 0;
+    const when = new Date(t.exitTime).toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+    const levPnl = lev ? `<span class="hlev ${good ? 'up' : 'down'}">${t.pnlPct >= 0 ? '+' : ''}${(t.pnlPct * lev).toFixed(1)}% @${lev}x</span>` : '';
+    const hit = `<span class="tgt ${t.tp1Hit ? 'on' : ''}">TP1</span><span class="tgt ${t.tp2Hit ? 'on' : ''}">TP2</span>` +
+                `<span class="tgt ${t.r < 0 ? 'bad' : ''}">SL</span>` +
+                (t.vol1h != null ? `<span class="volchip ${t.vol1h >= 3 ? 'hot' : ''}">1H ${t.vol1h.toFixed(1)}%</span>` : '');
+    const peak = t.peakR > t.r + 0.05
+      ? `<span class="hpeak">peaked +${t.peakR.toFixed(2)}R · gave back ${t.gaveBack.toFixed(2)}R</span>` : '';
+    body.appendChild(el('div', 'hrow ' + (good ? 'win' : 'loss'), `
+      <div class="hr1">
+        <span class="hside ${t.side === 'LONG' ? 'up' : 'down'}">${t.side === 'LONG' ? '▲' : '▼'} ${t.side}</span>
+        <span class="hreason">${t.reason}</span>
+        <span class="hr ${good ? 'up' : 'down'}">${good ? '+' : ''}${t.r.toFixed(2)}R</span>
+      </div>
+      <div class="htgts">${hit}${peak}</div>
+      <div class="hr2">
+        <span>${fmtPx(t.entryPrice)} → ${fmtPx(t.exitPrice)}</span>
+        <span class="${good ? 'up' : 'down'}">${t.pnlPct >= 0 ? '+' : ''}${t.pnlPct.toFixed(2)}%</span>
+        ${levPnl}
+      </div>
+      <div class="hr3">
+        <span>${when}</span>
+        <span>${t.tpSource || ''}${t.tp1Filled ? ` · TP1 banked ${Math.round(t.tp1Portion * 100)}%` : ''}</span>
+      </div>`));
+  }
 }
-$('#histClose').onclick = () => $('#histModal').classList.add('hidden');
-$('#histModal').onclick = e => { if (e.target.id === 'histModal') $('#histModal').classList.add('hidden'); };
+$('#histClose').onclick = () => { $('#histModal').classList.add('hidden'); histId = null; };
+$('#histModal').onclick = e => { if (e.target.id === 'histModal') { $('#histModal').classList.add('hidden'); histId = null; } };
 
 // ─────────── alerts in-page ───────────
 function onAlert(entry) {

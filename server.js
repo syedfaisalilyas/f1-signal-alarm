@@ -7,7 +7,8 @@ import { fileURLToPath } from 'url';
 
 import * as store from './src/store.js';
 import { Feed } from './src/feed.js';
-import { searchSymbols, ticker24h } from './src/providers.js';
+import { searchSymbols, ticker24h, fetchCandlesDeep } from './src/providers.js';
+import { analyze } from './src/strategy.js';
 import { initPush, channelStatus, buildMessage, dispatch } from './src/notify.js';
 import { DEFAULTS } from './src/strategy.js';
 import { VolatilityScanner } from './src/volatility.js';
@@ -215,6 +216,53 @@ app.get('/api/volatility/lookup', async (req, res) => {
     const market = req.query.market === 'spot' ? 'spot' : 'futures';
     if (!req.query.symbol) return res.status(400).json({ error: 'symbol required' });
     res.json(await vol.lookup(market, req.query.symbol));
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// Deeper trade log than the live window keeps, optionally only the trades
+// taken while the coin was actually moving.
+const histCache = new Map();
+app.get('/api/history/:id', async (req, res) => {
+  try {
+    const id = decodeURIComponent(req.params.id);
+    const w = store.get().watches.find(x => x.id === id);
+    if (!w) return res.status(404).json({ error: 'not watching that symbol' });
+
+    const limit = Math.min(200, Math.max(5, Number(req.query.limit) || 20));
+    const minVol1h = Number(req.query.minVol1h) || 0;
+    const bars = limit <= 20 ? 1500 : limit <= 50 ? 3000 : 6000;
+
+    const key = `${id}:${bars}`;
+    let cached = histCache.get(key);
+    if (!cached || Date.now() - cached.at > 120000) {
+      const candles = await fetchCandlesDeep(w.market, w.symbol, w.interval, bars);
+      const a = analyze(candles, { ...(store.get().settings.cfg || {}), ...(w.cfg || {}) });
+      cached = { at: Date.now(), bars: candles.length, trades: a ? a.trades : [] };
+      histCache.set(key, cached);
+    }
+
+    const all = [...cached.trades].reverse();
+    const filtered = minVol1h > 0 ? all.filter(t => t.vol1h !== null && t.vol1h >= minVol1h) : all;
+    const rows = filtered.slice(0, limit);
+
+    const agg = list => {
+      const n = list.length;
+      const wins = list.filter(t => t.r > 0).length;
+      const green = list.filter(t => t.r >= -0.02).length;
+      const totalR = list.reduce((s, t) => s + t.r, 0);
+      const totalPct = list.reduce((s, t) => s + t.pnlPct, 0);
+      return {
+        trades: n, wins, winRate: n ? wins / n * 100 : 0,
+        greenRate: n ? green / n * 100 : 0,
+        totalR, avgR: n ? totalR / n : 0, totalPct
+      };
+    };
+
+    res.json({
+      symbol: w.symbol, interval: w.interval, market: w.market,
+      barsScanned: cached.bars, totalTrades: all.length, matched: filtered.length,
+      stats: agg(rows), rows
+    });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 

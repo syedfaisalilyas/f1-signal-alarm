@@ -112,6 +112,29 @@ export function aggregate(bars, n) {
   return out;
 }
 
+// Binance caps klines at 1500 per call. Page backwards for deeper history so
+// the trade log can go past what the live window holds.
+export async function fetchCandlesDeep(market, symbol, interval, bars = 3000) {
+  if (market === 'forex') return fetchCandles(market, symbol, interval, Math.min(bars, 5000));
+  const base = market === 'futures' ? FUT : SPOT;
+  const out = [];
+  let endTime = Date.now();
+  for (let page = 0; page < 6 && out.length < bars; page++) {
+    const raw = await jget(`${base}/klines?symbol=${symbol}&interval=${interval}&limit=1500&endTime=${endTime}`);
+    if (!raw.length) break;
+    const chunk = raw.map(k => ({
+      t: k[0], o: +k[1], h: +k[2], l: +k[3], c: +k[4], v: +k[5],
+      closeTime: k[6], closed: k[6] < Date.now()
+    }));
+    out.unshift(...chunk);
+    if (raw.length < 1500) break;
+    endTime = chunk[0].t - 1;
+  }
+  // de-dup by open time, oldest first
+  const seen = new Set();
+  return out.filter(b => (seen.has(b.t) ? false : seen.add(b.t))).sort((a, b) => a.t - b.t);
+}
+
 export async function ticker24h(market, symbol) {
   const base = market === 'futures' ? FUT : SPOT;
   const d = await jget(`${base}/ticker/24hr?symbol=${symbol}`);

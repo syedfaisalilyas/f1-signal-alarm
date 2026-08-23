@@ -103,8 +103,24 @@
       </div>
       <button id="histClose" class="btn ghost">✕</button>
     </div>
+    <div class="histctl">
+      <label>Show
+        <select id="histLimit">
+          <option>10</option><option selected>20</option><option>50</option><option>100</option>
+        </select>
+      </label>
+      <label>Only when 1H range ≥
+        <select id="histVol">
+          <option value="0">any</option>
+          <option value="2">2%</option>
+          <option value="3">3%</option>
+          <option value="5">5%</option>
+          <option value="8">8%</option>
+        </select>
+      </label>
+    </div>
     <div id="histStats" class="hstats"></div>
-    <h4>Last 10 closed trades</h4>
+    <div id="histMeta" class="histmeta"></div>
     <div id="histRows" class="hrows"></div>
   </div>
 </div>

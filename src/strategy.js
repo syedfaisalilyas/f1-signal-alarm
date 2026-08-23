@@ -253,6 +253,7 @@ export function analyze(candles, userCfg = {}) {
       mfePx = close[i];
       openTrade = {
         side: dir === 1 ? 'LONG' : 'SHORT', entryBar: i, entryTime: candles[i].t,
+        vol1h: vol1hAt(i), vol1d: vol1dAt(i), atrPctAtEntry: atrPct(i),
         entryPrice: entryP, sl: slP, tp1: tp1P, tp2: tp2P, tpSource,
         riskPct: (risk / entryP) * 100, volConfirmed: volSpike(i),
         tp1Pct: (Math.abs(tp1P - entryP) / entryP) * 100,
