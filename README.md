@@ -145,13 +145,24 @@ The repo has a `Dockerfile`, so any container host works. **Koyeb** is the best 
 its free instance stays running (Render's free tier sleeps after 15 min of no traffic,
 which would silence your alarms).
 
+Every push to `main` builds `ghcr.io/<you>/f1-signal-alarm:latest` via GitHub Actions.
+
+**Scripted:** grab an API token at
+[app.koyeb.com/settings/api](https://app.koyeb.com/settings/api), then:
 ```bash
-git init && git add -A && git commit -m "f1 signal alarm"
-gh repo create f1-signal-alarm --private --source=. --push
+TELEGRAM_TOKEN=... TELEGRAM_CHAT_ID=... npm run deploy -- <koyeb-token>
 ```
-Then on [koyeb.com](https://koyeb.com): **Create Service → GitHub → your repo →
-Dockerfile**, and set env vars `APP_PASSWORD`, `TELEGRAM_TOKEN`, `TELEGRAM_CHAT_ID`.
-You get a permanent `https://….koyeb.app` URL.
+Creates the app, deploys the free instance, waits for healthy, prints your URL + key.
+
+**Or via the UI:** Create Service → GitHub → this repo → it autodetects the Dockerfile.
+
+> ⚠️ **Pick a non-US region** (`fra`, `par`, `eu`, `ap`). Binance returns HTTP 451 to
+> US IPs, so a service in `dal`/`rdu`/`mci`/`dsm` gets no market data at all.
+> The deploy script defaults to `fra`.
+
+> The GHCR image is private by default. Either make it public
+> (repo → Packages → f1-signal-alarm → Package settings → Change visibility), or let
+> Koyeb build from the Dockerfile via the GitHub integration instead.
 
 > Free container hosts have no persistent disk, so `data/state.json` resets on redeploy
 > and you'd re-add your symbols. Everything else works identically.
