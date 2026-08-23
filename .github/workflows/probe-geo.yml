@@ -1,0 +1,22 @@
+# Throwaway probe: can a GitHub-hosted runner reach Binance market data?
+name: probe-geo
+on:
+  workflow_dispatch:
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Where is this runner
+        run: curl -s https://ipinfo.io/json | head -c 300; echo
+      - name: Endpoint reachability
+        run: |
+          for u in \
+            "https://api.binance.com/api/v3/klines?symbol=BTCUSDT&interval=3m&limit=2" \
+            "https://data-api.binance.vision/api/v3/klines?symbol=BTCUSDT&interval=3m&limit=2" \
+            "https://fapi.binance.com/fapi/v1/klines?symbol=BTCUSDT&interval=3m&limit=2" \
+            "https://api.mexc.com/api/v3/klines?symbol=BTCUSDT&interval=3m&limit=2" \
+            "https://api.bybit.com/v5/market/kline?category=linear&symbol=BTCUSDT&interval=3&limit=2" ; do
+            code=$(curl -s -o /tmp/body -w '%{http_code}' --max-time 20 "$u" || echo 000)
+            echo "$code  ${u%%\?*}"
+            [ "$code" != "200" ] && head -c 160 /tmp/body && echo
+          done
