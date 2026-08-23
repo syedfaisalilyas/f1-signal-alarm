@@ -1,0 +1,390 @@
+//@version=5
+indicator("F1 + Volume Profile TP", shorttitle="F1 VP", overlay=true,
+     max_labels_count=500, max_lines_count=500, max_boxes_count=500)
+
+// ══════════════════ ① F1 SIGNAL ENGINE (unchanged) ══════════════════
+gS = "① Signal Engine"
+emaFastLength = input.int(9,  "Fast EMA Length",   group=gS)
+emaSlowLength = input.int(21, "Slow EMA Length",   group=gS)
+rsiLength     = input.int(14, "RSI Length",        group=gS)
+rsiOverbought = input.int(70, "RSI Overbought",    group=gS)
+rsiOversold   = input.int(30, "RSI Oversold",      group=gS)
+macdFastLen   = input.int(12, "MACD Fast Length",  group=gS)
+macdSlowLen   = input.int(26, "MACD Slow Length",  group=gS)
+macdSignalLen = input.int(9,  "MACD Signal Length",group=gS)
+volLen        = input.int(20, "Volume MA Length",  group=gS)
+volMult       = input.float(1.5, "Volume Spike Multiplier", step=0.1, group=gS)
+
+// ══════════════════ ② FIXED RANGE VOLUME PROFILE ══════════════════
+gV = "② Volume Profile"
+vpLen    = input.int(150,  "Profile lookback (bars)", minval=20, maxval=500, group=gV,
+   tooltip="The 'fixed range'. 150 bars on 3m ≈ 7.5 hours of accepted value.")
+vpRows   = input.int(30,   "Profile rows",  minval=10, maxval=80, group=gV)
+vaPct    = input.float(70, "Value Area %",  minval=50, maxval=95, step=5, group=gV)
+hvnThr   = input.float(0.55,"Node threshold (× POC volume)", minval=0.2, maxval=1.0, step=0.05, group=gV,
+   tooltip="A row counts as a high-volume node (price shelf) at or above this share of the POC row.")
+showProf = input.bool(true, "Draw profile histogram", group=gV)
+vpWidth  = input.int(60,   "Histogram width (bars)", minval=10, maxval=200, group=gV)
+showVA   = input.bool(true, "Draw POC / VAH / VAL lines", group=gV)
+
+// ══════════════════ ③ TARGETS & STOP ══════════════════
+gR = "③ TP / SL"
+atrLen     = input.int(14,   "ATR Length", group=gR)
+slMode     = input.string("Swing", "Stop basis", options=["Prev candle","Swing","ATR"], group=gR)
+slLookback = input.int(3,    "Swing lookback", minval=1, group=gR)
+slAtrMult  = input.float(1.2,"ATR stop multiplier", step=0.1, group=gR)
+slBuf      = input.float(0.25,"Stop buffer (× ATR)", step=0.05, group=gR)
+minRiskAtr = input.float(0.35,"Min stop distance (× ATR)", step=0.05, group=gR)
+minTpAtr   = input.float(0.8, "Min TP distance (× ATR)", step=0.1, group=gR,
+   tooltip="Ignore nodes sitting right on top of entry — they're noise, not a target.")
+fallbackRR = input.float(2.0, "Fallback TP (R) when no node ahead", step=0.1, group=gR,
+   tooltip="Used on breakouts where price has left the profile entirely.")
+useRevExit = input.bool(true, "Exit early when price reverses at a node", group=gR)
+beAfterTp1 = input.bool(true, "Move stop to breakeven after TP1", group=gR)
+maxBars    = input.int(40,   "Time stop (bars, 0 = off)", group=gR)
+
+gVis = "④ Visuals"
+showLabels = input.bool(true, "Trade labels", group=gVis)
+showRaw    = input.bool(true, "Show all raw F1 signals", group=gVis)
+
+// ══════════════════ CALCULATIONS ══════════════════
+emaFast = ta.ema(close, emaFastLength)
+emaSlow = ta.ema(close, emaSlowLength)
+rsi     = ta.rsi(close, rsiLength)
+atr     = ta.atr(atrLen)
+
+macdLine   = ta.ema(close, macdFastLen) - ta.ema(close, macdSlowLen)
+signalLine = ta.ema(macdLine, macdSignalLen)
+macdBull   = macdLine > signalLine
+macdBear   = macdLine < signalLine
+
+avgVolume = ta.sma(volume, volLen)
+volSpike  = volume > avgVolume * volMult
+
+swingLo = ta.lowest(low,  slLookback)
+swingHi = ta.highest(high, slLookback)
+
+// Original F1 entries — untouched
+longBase  = ta.crossover(emaFast, emaSlow)  and rsi > rsiOversold  and macdBull
+shortBase = ta.crossunder(emaFast, emaSlow) and rsi < rsiOverbought and macdBear
+longConfirmed  = longBase  and volSpike
+shortConfirmed = shortBase and volSpike
+
+// Reversal candles
+body   = math.abs(close - open)
+upper  = high - math.max(close, open)
+lower  = math.min(close, open) - low
+hammer        = (lower >= body * 2) and (upper <= body) and close > open
+shootingStar  = (upper >= body * 2) and (lower <= body) and close < open
+bullishEngulf = close > open and close[1] < open[1] and close > open[1] and open < close[1]
+bearishEngulf = close < open and close[1] > open[1] and close < open[1] and open > close[1]
+
+// ══════════════════ VOLUME PROFILE ENGINE ══════════════════
+// Split the lookback range into rows, spread each bar's volume across the rows
+// it spans, then read off POC, Value Area, and every high-volume node.
+vpHi   = ta.highest(high, vpLen)
+vpLo   = ta.lowest(low,  vpLen)
+vpStep = (vpHi - vpLo) / vpRows
+
+var vols = array.new_float(vpRows, 0.0)
+array.fill(vols, 0.0)
+
+if vpStep > 0 and bar_index >= vpLen
+    for i = 0 to vpLen - 1
+        r1 = math.max(0, math.min(vpRows - 1, int(math.floor((low[i]  - vpLo) / vpStep))))
+        r2 = math.max(0, math.min(vpRows - 1, int(math.floor((high[i] - vpLo) / vpStep))))
+        per = volume[i] / (r2 - r1 + 1)
+        for r = r1 to r2
+            array.set(vols, r, array.get(vols, r) + per)
+
+// Point of Control — the price that traded the most
+pocIdx = 0
+pocVol = 0.0
+for r = 0 to vpRows - 1
+    v = array.get(vols, r)
+    if v > pocVol
+        pocVol := v
+        pocIdx := r
+
+// Value Area: expand out from the POC, always taking the fatter neighbour,
+// until vaPct of total volume is enclosed.
+vaTotal  = array.sum(vols)
+vaTarget = vaTotal * vaPct / 100
+vaUp = pocIdx
+vaDn = pocIdx
+vaAcc = pocVol
+for _i = 0 to vpRows * 2
+    if vaAcc >= vaTarget
+        break
+    vUp = vaUp < vpRows - 1 ? array.get(vols, vaUp + 1) : -1.0
+    vDn = vaDn > 0          ? array.get(vols, vaDn - 1) : -1.0
+    if vUp < 0 and vDn < 0
+        break
+    if vUp >= vDn
+        vaUp += 1
+        vaAcc += vUp
+    else
+        vaDn -= 1
+        vaAcc += vDn
+
+poc = vpLo + (pocIdx + 0.5) * vpStep
+vah = vpLo + (vaUp + 1) * vpStep
+val = vpLo + vaDn * vpStep
+
+// ── Is this bar rejecting off a high-volume shelf? ──
+// That's the structural reason a reversal sticks.
+nodeTol = atr * 0.6
+bearAtNode = false
+bullAtNode = false
+if vpStep > 0
+    for r = 0 to vpRows - 1
+        if array.get(vols, r) >= pocVol * hvnThr
+            lvl = vpLo + (r + 0.5) * vpStep
+            if math.abs(high - lvl) <= nodeTol
+                bearAtNode := true
+            if math.abs(low - lvl) <= nodeTol
+                bullAtNode := true
+
+// ── THE REVERSAL POINT ──
+// A reversal candle is noise on its own. At a volume shelf it's a level being defended.
+revDown = (shootingStar or bearishEngulf or (rsi > rsiOverbought and close < open)) and bearAtNode
+revUp   = (hammer or bullishEngulf or (rsi < rsiOversold and close > open)) and bullAtNode
+
+// ══════════════════ TRADE STATE + PROFILE-BASED TARGETS ══════════════════
+var int   pos        = 0
+var float entryP     = na
+var float slP        = na
+var float slInit     = na
+var float tp1P       = na
+var float tp2P       = na
+var int   entryBarIx = na
+var bool  tp1Done    = false
+var string tpSource  = ""
+
+var int   nWin  = 0
+var int   nLoss = 0
+var float sumR  = 0.0
+
+float  exitPx  = na
+string exitTag = ""
+bool   markL   = false
+bool   markS   = false
+
+// ── EXITS ──
+if pos == 1
+    if low <= slP
+        exitPx  := math.min(slP, open)
+        exitTag := tp1Done and beAfterTp1 ? "BE STOP" : "SL"
+    else if high >= tp2P
+        exitPx  := tp2P
+        exitTag := "TP2 ✅"
+    else
+        if not tp1Done and high >= tp1P
+            tp1Done := true
+            if beAfterTp1
+                slP := entryP
+        if bar_index > entryBarIx
+            if useRevExit and revDown and close > entryP
+                exitPx  := close
+                exitTag := "TP · REVERSAL @ NODE"
+            else if maxBars > 0 and bar_index - entryBarIx >= maxBars
+                exitPx  := close
+                exitTag := "TIME"
+
+if pos == -1
+    if high >= slP
+        exitPx  := math.max(slP, open)
+        exitTag := tp1Done and beAfterTp1 ? "BE STOP" : "SL"
+    else if low <= tp2P
+        exitPx  := tp2P
+        exitTag := "TP2 ✅"
+    else
+        if not tp1Done and low <= tp1P
+            tp1Done := true
+            if beAfterTp1
+                slP := entryP
+        if bar_index > entryBarIx
+            if useRevExit and revUp and close < entryP
+                exitPx  := close
+                exitTag := "TP · REVERSAL @ NODE"
+            else if maxBars > 0 and bar_index - entryBarIx >= maxBars
+                exitPx  := close
+                exitTag := "TIME"
+
+if not na(exitPx)
+    rMult  = pos == 1 ? (exitPx - entryP) / (entryP - slInit) : (entryP - exitPx) / (slInit - entryP)
+    pnlPct = (pos == 1 ? exitPx - entryP : entryP - exitPx) / entryP * 100
+    if rMult >= 0
+        nWin += 1
+    else
+        nLoss += 1
+    sumR += rMult
+    if showLabels
+        label.new(bar_index, pos == 1 ? high : low,
+          exitTag + "  " + str.tostring(exitPx, format.mintick) + "\n" +
+          str.tostring(rMult, "#.##") + "R  (" + str.tostring(pnlPct, "#.##") + "%)",
+          style = pos == 1 ? label.style_label_down : label.style_label_up,
+          color = rMult >= 0 ? color.new(color.teal, 20) : color.new(color.maroon, 20),
+          textcolor=color.white, size=size.small)
+    pos := 0
+    tp1Done := false
+
+// ── ENTRIES: targets read straight off the profile ──
+if pos == 0 and (longBase or shortBase)
+    dir = longBase ? 1 : -1
+
+    // stop
+    float rawSL = na
+    if dir == 1
+        base = slMode == "Prev candle" ? low[1] : slMode == "Swing" ? swingLo : close - atr * slAtrMult
+        rawSL := slMode == "ATR" ? base : math.min(base, low) - atr * slBuf
+    else
+        base = slMode == "Prev candle" ? high[1] : slMode == "Swing" ? swingHi : close + atr * slAtrMult
+        rawSL := slMode == "ATR" ? base : math.max(base, high) + atr * slBuf
+
+    entryP := close
+    risk   = math.max(dir == 1 ? entryP - rawSL : rawSL - entryP, atr * minRiskAtr)
+    slP    := dir == 1 ? entryP - risk : entryP + risk
+    slInit := slP
+
+    // ── walk the profile away from entry, collect the first two shelves ──
+    float n1 = na
+    float n2 = na
+    minGap = atr * minTpAtr
+    if vpStep > 0
+        if dir == 1
+            for r = 0 to vpRows - 1
+                lvl = vpLo + (r + 0.5) * vpStep
+                if lvl - entryP >= minGap and array.get(vols, r) >= pocVol * hvnThr
+                    if na(n1)
+                        n1 := lvl
+                    else if na(n2) and lvl - n1 >= minGap
+                        n2 := lvl
+                        break
+        else
+            // Ascend and carry the nearest forward: the last qualifying row below
+            // entry is the nearest shelf, the one before it (separated by minGap)
+            // is the next target down. Adjacent rows are one shelf, not two targets.
+            for r = 0 to vpRows - 1
+                lvl = vpLo + (r + 0.5) * vpStep
+                if entryP - lvl >= minGap and array.get(vols, r) >= pocVol * hvnThr
+                    if na(n1)
+                        n1 := lvl
+                    else
+                        if lvl - n1 >= minGap
+                            n2 := n1
+                        n1 := lvl
+
+    // Value-area edge is the other classic magnet — use it if the profile is thin
+    vaEdge = dir == 1 ? vah : val
+    vaOk   = dir == 1 ? vaEdge - entryP >= minGap : entryP - vaEdge >= minGap
+
+    if not na(n1) and not na(n2)
+        tp1P := n1
+        tp2P := n2
+        tpSource := "HVN → HVN"
+    else if not na(n1) and vaOk and (dir == 1 ? vaEdge > n1 : vaEdge < n1)
+        tp1P := n1
+        tp2P := vaEdge
+        tpSource := "HVN → " + (dir == 1 ? "VAH" : "VAL")
+    else if not na(n1)
+        tp1P := n1
+        tp2P := dir == 1 ? entryP + risk * fallbackRR : entryP - risk * fallbackRR
+        tpSource := "HVN → " + str.tostring(fallbackRR, "#.#") + "R"
+    else if vaOk
+        tp1P := vaEdge
+        tp2P := dir == 1 ? math.max(vpHi, entryP + risk * fallbackRR) : math.min(vpLo, entryP - risk * fallbackRR)
+        tpSource := (dir == 1 ? "VAH" : "VAL") + " → range edge"
+    else
+        // price has broken clear of the profile — nothing overhead to stall it
+        tp1P := dir == 1 ? entryP + risk : entryP - risk
+        tp2P := dir == 1 ? entryP + risk * fallbackRR : entryP - risk * fallbackRR
+        tpSource := "breakout · " + str.tostring(fallbackRR, "#.#") + "R"
+
+    pos := dir
+    entryBarIx := bar_index
+    tp1Done := false
+    markL := dir == 1
+    markS := dir == -1
+
+    if showLabels
+        label.new(bar_index, dir == 1 ? low : high,
+          (dir == 1 ? "LONG" : "SHORT") + (volSpike ? " ✅" : "") + "  " + str.tostring(entryP, format.mintick) +
+          "\nTP1 " + str.tostring(tp1P, format.mintick) + "  (" + str.tostring(math.abs(tp1P - entryP) / entryP * 100, "#.##") + "%)" +
+          "\nTP2 " + str.tostring(tp2P, format.mintick) + "  (" + str.tostring(math.abs(tp2P - entryP) / entryP * 100, "#.##") + "%)" +
+          "\nSL  " + str.tostring(slP,  format.mintick) + "  (" + str.tostring(risk / entryP * 100, "#.##") + "%)" +
+          "\n" + tpSource,
+          style = dir == 1 ? label.style_label_up : label.style_label_down,
+          color = dir == 1 ? color.new(color.green, 15) : color.new(color.red, 15),
+          textcolor=color.white, size=size.small)
+
+// ══════════════════ DRAWING ══════════════════
+// profile histogram, redrawn on the last bar only
+var boxes = array.new_box()
+if barstate.islast and showProf and vpStep > 0 and pocVol > 0
+    for i = 0 to array.size(boxes) - 1
+        box.delete(array.get(boxes, i))
+    array.clear(boxes)
+    for r = 0 to vpRows - 1
+        v = array.get(vols, r)
+        w = int(math.round(v / pocVol * vpWidth))
+        if w > 0
+            y1 = vpLo + r * vpStep
+            y2 = y1 + vpStep
+            inVA  = r >= vaDn and r <= vaUp
+            isHVN = v >= pocVol * hvnThr
+            col = r == pocIdx ? color.new(color.orange, 20)
+                 : isHVN     ? color.new(color.blue, 55)
+                 : inVA      ? color.new(color.gray, 72)
+                 :             color.new(color.gray, 86)
+            array.push(boxes, box.new(bar_index - w, y2, bar_index, y1, border_color=color.new(color.black, 100), bgcolor=col))
+
+plot(showVA ? poc : na, "POC", color.new(color.orange, 0), 2, plot.style_linebr)
+plot(showVA ? vah : na, "VAH", color.new(color.blue, 30), 1, plot.style_linebr)
+plot(showVA ? val : na, "VAL", color.new(color.blue, 30), 1, plot.style_linebr)
+
+plot(emaFast, "Fast EMA", color.new(color.green, 0), 2)
+plot(emaSlow, "Slow EMA", color.new(color.red, 0), 2)
+
+plot(pos != 0 ? tp2P : na, "TP2", color.new(color.green, 0), 1, plot.style_linebr)
+plot(pos != 0 ? tp1P : na, "TP1", color.new(color.teal,  0), 1, plot.style_linebr)
+plot(pos != 0 ? slP  : na, "SL",  color.new(color.red,   0), 1, plot.style_linebr)
+bgcolor(pos == 1 ? color.new(color.green, 94) : pos == -1 ? color.new(color.red, 94) : na)
+
+plotshape(volSpike, "Volume Spike", shape.circle, location.bottom, color.new(color.purple, 40), size=size.tiny)
+plotshape(showRaw and longBase,  "F1 Long (raw)",  shape.triangleup,   location.belowbar, color.new(color.green, 55), size=size.tiny)
+plotshape(showRaw and shortBase, "F1 Short (raw)", shape.triangledown, location.abovebar, color.new(color.red, 55),   size=size.tiny)
+plotshape(markL, "Long Entry",  shape.triangleup,   location.belowbar, color.new(color.green, 0), size=size.small)
+plotshape(markS, "Short Entry", shape.triangledown, location.abovebar, color.new(color.red, 0),   size=size.small)
+
+// ── the reversal point itself ──
+plotshape(revDown, "Reversal Down @ node", shape.diamond, location.abovebar, color.new(color.red, 0), size=size.small, text="⟲")
+plotshape(revUp,   "Reversal Up @ node",   shape.diamond, location.belowbar, color.new(color.lime, 0), size=size.small, text="⟲")
+
+// ══════════════════ STATS ══════════════════
+var table st = table.new(position.top_right, 2, 6, border_width=1, frame_width=1, frame_color=color.new(color.gray, 50))
+if barstate.islast
+    total = nWin + nLoss
+    wr    = total > 0 ? 100.0 * nWin / total : 0.0
+    table.cell(st, 0, 0, "F1 VP  " + timeframe.period, text_color=color.white, bgcolor=color.new(color.blue, 30), text_size=size.small)
+    table.cell(st, 1, 0, pos == 1 ? "IN LONG" : pos == -1 ? "IN SHORT" : "FLAT", text_color=color.white,
+       bgcolor = pos == 1 ? color.new(color.green, 30) : pos == -1 ? color.new(color.red, 30) : color.new(color.gray, 30), text_size=size.small)
+    table.cell(st, 0, 1, "POC",     text_color=color.silver, text_size=size.small)
+    table.cell(st, 1, 1, str.tostring(poc, format.mintick), text_color=color.orange, text_size=size.small)
+    table.cell(st, 0, 2, "VAH / VAL", text_color=color.silver, text_size=size.small)
+    table.cell(st, 1, 2, str.tostring(vah, format.mintick) + " / " + str.tostring(val, format.mintick), text_color=color.white, text_size=size.small)
+    table.cell(st, 0, 3, "Trades",  text_color=color.silver, text_size=size.small)
+    table.cell(st, 1, 3, str.tostring(total), text_color=color.white, text_size=size.small)
+    table.cell(st, 0, 4, "Win rate", text_color=color.silver, text_size=size.small)
+    table.cell(st, 1, 4, str.tostring(wr, "#.#") + "%", text_color = wr >= 50 ? color.lime : color.orange, text_size=size.small)
+    table.cell(st, 0, 5, "Total R", text_color=color.silver, text_size=size.small)
+    table.cell(st, 1, 5, str.tostring(sumR, "#.##") + "R", text_color = sumR >= 0 ? color.lime : color.red, text_size=size.small)
+
+// ══════════════════ ALERTS ══════════════════
+alertcondition(longBase,  "Long (F1)",  "Scalping: Go LONG 🚀 @{{close}}")
+alertcondition(shortBase, "Short (F1)", "Scalping: Go SHORT 🔻 @{{close}}")
+alertcondition(longConfirmed,  "Long Confirmed",  "✅ Strong LONG with Volume @{{close}}")
+alertcondition(shortConfirmed, "Short Confirmed", "✅ Strong SHORT with Volume @{{close}}")
+alertcondition(revDown, "Reversal Down at node", "⟲ Price reversing DOWN at a volume node @{{close}}")
+alertcondition(revUp,   "Reversal Up at node",   "⟲ Price reversing UP at a volume node @{{close}}")
+alertcondition(not na(exitPx), "Any Exit", "F1 VP: EXIT @{{close}}")
