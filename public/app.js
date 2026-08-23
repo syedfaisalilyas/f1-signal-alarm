@@ -356,9 +356,18 @@ function renderBest(d) {
         <span>ADX ${r.adx?.toFixed(0) ?? '—'}</span>
         <span>stop ${r.stopPct?.toFixed(1) ?? '—'}%</span>
       </div>
-      <div class="b3">
-        <span>1D ${r.vol1d?.toFixed(0)}% · 1H ${r.vol1h?.toFixed(1)}%</span>
-        <span class="blev">+${r.pctAtUsable.toFixed(0)}% at ${r.usableLev}x${r.maxLev > r.usableLev ? ` <em>(max ${r.maxLev}x unsafe)</em>` : ''}</span>
+      <div class="b3"><span>1D ${r.vol1d?.toFixed(0)}% · 1H ${r.vol1h?.toFixed(1)}%</span></div>
+      <div class="blevs">
+        <div class="lvbox max ${r.maxLev > r.usableLev ? 'danger' : 'safe'}">
+          <span>MEXC max ${r.maxLev ?? '—'}x</span>
+          <b>+${(r.totalPct * (r.maxLev || 1)).toFixed(0)}%</b>
+          ${r.maxLev > r.usableLev ? '<em>liquidates before the stop</em>' : '<em>stop survives ✓</em>'}
+        </div>
+        <div class="lvbox rec">
+          <span>Recommended ${r.usableLev}x</span>
+          <b>+${r.pctAtUsable.toFixed(0)}%</b>
+          <em>stop costs ${(r.stopPct * r.usableLev).toFixed(0)}% of margin</em>
+        </div>
       </div>`);
     n.onclick = () => {
       if (r.watched) return;

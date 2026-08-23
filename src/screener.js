@@ -51,7 +51,11 @@ export class Screener {
       const lev = maxLev(market, c.symbol);
       // Cap the leverage figure at what this symbol's own stop can survive —
       // quoting a return at leverage that liquidates first is meaningless.
-      const usable = a.calibration?.liqLev ? Math.min(lev || 0, a.calibration.liqLev) : (lev || 0);
+      // Recommended = the stop costs about 40% of margin, capped by what the
+      // stop can survive at all, and never above the exchange maximum.
+      const liq = a.calibration?.liqLev ?? null;
+      const comfy = a.calibration?.safeLev ?? null;
+      const usable = Math.max(1, Math.min(lev || 1, comfy ?? lev ?? 1, liq ?? lev ?? 1));
       return {
         symbol: c.symbol, interval: tf, market,
         price: c.price, vol5m: c.vol5m, vol1h: c.vol1h, vol1d: c.vol1d, quoteVol: c.quoteVol,

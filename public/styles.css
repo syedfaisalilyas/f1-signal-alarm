@@ -267,3 +267,17 @@ main{max-width:1400px;margin:0 auto;padding:0 16px}
 .b3{display:flex;justify-content:space-between;gap:10px;font-size:10px;color:var(--faint);margin-top:4px}
 .blev{color:var(--warn)}
 .blev em{color:var(--down);font-style:normal}
+
+/* ── leverage boxes in the screener ── */
+.blevs{display:grid;grid-template-columns:1fr 1fr;gap:7px;margin-top:8px}
+.lvbox{background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:7px 9px;display:grid;gap:1px}
+.lvbox span{font-size:9px;text-transform:uppercase;letter-spacing:.05em;color:var(--dim)}
+.lvbox b{font-size:14px;font-variant-numeric:tabular-nums}
+.lvbox em{font-size:9px;font-style:normal;color:var(--faint)}
+.lvbox.max b{color:var(--dim)}
+.lvbox.max.danger{border-color:rgba(255,84,112,.3)}
+.lvbox.max.danger em{color:var(--down)}
+.lvbox.max.safe{border-color:rgba(38,208,124,.3)}
+.lvbox.max.safe b{color:var(--up)} .lvbox.max.safe em{color:var(--up)}
+.lvbox.rec{border-color:rgba(38,208,124,.35);background:rgba(38,208,124,.06)}
+.lvbox.rec b{color:var(--up)}
