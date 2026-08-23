@@ -12,6 +12,7 @@ import { analyze } from './src/strategy.js';
 import { initPush, channelStatus, buildMessage, dispatch } from './src/notify.js';
 import { DEFAULTS } from './src/strategy.js';
 import { VolatilityScanner } from './src/volatility.js';
+import { Screener } from './src/screener.js';
 import { refresh as refreshLeverage, loaded as levLoaded, sourceName as levSourceName, setOverrides } from './src/leverage.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -38,6 +39,7 @@ app.use(express.static(path.join(__dirname, 'public')));
 initPush();
 const feed = new Feed(() => store.get().settings.cfg || {});
 const vol = new VolatilityScanner();
+const screener = new Screener(vol, () => store.get().settings.cfg || {});
 
 // ─────────────── browser fan-out ───────────────
 function broadcast(type, payload) {
@@ -262,6 +264,19 @@ app.get('/api/history/:id', async (req, res) => {
       symbol: w.symbol, interval: w.interval, market: w.market,
       barsScanned: cached.bars, totalTrades: all.length, matched: filtered.length,
       stats: agg(rows), rows
+    });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+app.get('/api/screener', async (req, res) => {
+  try {
+    const coins = Math.min(30, Math.max(5, Number(req.query.coins) || 18));
+    const d = await screener.run({ market: req.query.market === 'spot' ? 'spot' : 'futures', coins });
+    const watched = new Set(feed.snapshot().map(w => `${w.market}:${w.symbol}:${w.interval}`));
+    const tag = r => ({ ...r, watched: watched.has(`${r.market}:${r.symbol}:${r.interval}`) });
+    res.json({
+      at: d.at, scanned: d.scanned, qualified: d.qualified, profitable: d.profitable,
+      rows: d.rows.slice(0, 40).map(tag), bestPerCoin: d.bestPerCoin.slice(0, 20).map(tag)
     });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });

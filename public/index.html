@@ -22,6 +22,7 @@
     <button id="soundBtn" class="btn ghost" title="Browser alarm sound">🔇 Sound</button>
     <button id="pushBtn" class="btn ghost" title="Push to this device">📱 Push</button>
     <button id="muteBtn" class="btn ghost" title="Mute all alerts">🔔 Live</button>
+    <button id="bestBtn" class="btn ghost" title="Coins the strategy is actually profitable on">★ Best</button>
     <button id="testBtn" class="btn ghost">Test</button>
     <button id="cfgBtn" class="btn ghost">⚙</button>
   </div>
@@ -92,6 +93,34 @@
   <h3>Alert feed</h3>
   <div id="log" class="log"></div>
 </section>
+
+<!-- best suitable -->
+<div id="bestModal" class="modal hidden">
+  <div class="sheet">
+    <div class="sheethead">
+      <div>
+        <h2>Best suitable coins</h2>
+        <div class="dim" style="font-size:12px;margin-top:3px">
+          Strategy backtested on the most volatile coins across 1m / 3m / 5m</div>
+      </div>
+      <button id="bestClose" class="btn ghost">✕</button>
+    </div>
+    <div class="histctl">
+      <label>Scan top
+        <select id="bestCoins"><option>10</option><option selected>18</option><option>30</option></select>
+        coins</label>
+      <label>Show
+        <select id="bestMode">
+          <option value="best">best timeframe per coin</option>
+          <option value="all">every timeframe</option>
+        </select>
+      </label>
+      <button id="bestRefresh" class="btn ghost">↻</button>
+    </div>
+    <div id="bestMeta" class="histmeta"></div>
+    <div id="bestRows" class="hrows"></div>
+  </div>
+</div>
 
 <!-- trade history -->
 <div id="histModal" class="modal hidden">

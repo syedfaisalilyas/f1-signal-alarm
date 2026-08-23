@@ -254,3 +254,16 @@ main{max-width:1400px;margin:0 auto;padding:0 16px}
 .volchip{font-size:9px;padding:2px 6px;border-radius:5px;background:var(--panel);
   color:var(--faint);border:1px solid var(--line)}
 .volchip.hot{color:var(--warn);border-color:rgba(255,176,46,.35)}
+
+/* ── best suitable ── */
+.brow{background:var(--panel2);border-radius:10px;padding:11px 13px;margin-bottom:7px;
+  border-left:3px solid var(--up);cursor:pointer;transition:.15s;font-variant-numeric:tabular-nums}
+.brow:hover{background:#202939}
+.brow.watched{opacity:.6;border-left-color:var(--info);cursor:default}
+.b1{display:flex;align-items:center;gap:8px}
+.bsym{font-weight:680;font-size:15px}
+.b1 .bpct{margin-left:auto;font-weight:700;font-size:15px}
+.b2{display:flex;gap:12px;font-size:11px;color:var(--dim);margin-top:5px}
+.b3{display:flex;justify-content:space-between;gap:10px;font-size:10px;color:var(--faint);margin-top:4px}
+.blev{color:var(--warn)}
+.blev em{color:var(--down);font-style:normal}

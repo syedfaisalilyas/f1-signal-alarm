@@ -311,6 +311,65 @@ function vaStrip(prof, price, pos) {
   return wrap;
 }
 
+// ─────────── best suitable ───────────
+$('#bestBtn').onclick = () => { $('#bestModal').classList.remove('hidden'); loadBest(); };
+$('#bestClose').onclick = () => $('#bestModal').classList.add('hidden');
+$('#bestModal').onclick = e => { if (e.target.id === 'bestModal') $('#bestModal').classList.add('hidden'); };
+$('#bestCoins').onchange = loadBest;
+$('#bestMode').onchange = () => renderBest(lastBest);
+$('#bestRefresh').onclick = loadBest;
+
+let lastBest = null;
+async function loadBest() {
+  $('#bestMeta').textContent = 'backtesting… this takes a few seconds';
+  $('#bestRows').innerHTML = '';
+  try {
+    lastBest = await apiJson(`/api/screener?coins=${$('#bestCoins').value}`);
+    if (lastBest.error) throw new Error(lastBest.error);
+    renderBest(lastBest);
+  } catch (e) {
+    $('#bestMeta').textContent = 'scan failed: ' + e.message;
+  }
+}
+
+function renderBest(d) {
+  if (!d) return;
+  const rows = $('#bestMode').value === 'best' ? d.bestPerCoin : d.rows;
+  $('#bestMeta').innerHTML =
+    `tested ${d.scanned} coin/timeframe combos · <b>${d.profitable}</b> profitable · ` +
+    `ranked by percent of price captured`;
+  const box = $('#bestRows');
+  box.innerHTML = '';
+  if (!rows.length) { box.innerHTML = '<div class="hempty">Nothing profitable in this scan.</div>'; return; }
+
+  for (const r of rows) {
+    const n = el('div', 'brow' + (r.watched ? ' watched' : ''), `
+      <div class="b1">
+        <span class="bsym">${r.symbol}</span>
+        <span class="iv">${r.interval}</span>
+        ${r.watched ? '<span class="tag">watching</span>' : ''}
+        <span class="bpct up">+${r.totalPct.toFixed(1)}%</span>
+      </div>
+      <div class="b2">
+        <span>${r.trades} trades</span>
+        <span class="${r.winRate >= 70 ? 'up' : ''}">${r.winRate.toFixed(0)}% win</span>
+        <span>ADX ${r.adx?.toFixed(0) ?? '—'}</span>
+        <span>stop ${r.stopPct?.toFixed(1) ?? '—'}%</span>
+      </div>
+      <div class="b3">
+        <span>1D ${r.vol1d?.toFixed(0)}% · 1H ${r.vol1h?.toFixed(1)}%</span>
+        <span class="blev">+${r.pctAtUsable.toFixed(0)}% at ${r.usableLev}x${r.maxLev > r.usableLev ? ` <em>(max ${r.maxLev}x unsafe)</em>` : ''}</span>
+      </div>`);
+    n.onclick = () => {
+      if (r.watched) return;
+      addWatch({ market: r.market, symbol: r.symbol });
+      $('#tf').value = r.interval;
+      setTimeout(() => addWatch({ market: r.market, symbol: r.symbol }), 50);
+    };
+    box.appendChild(n);
+  }
+}
+
 // ─────────── trade history ───────────
 let histId = null;
 
