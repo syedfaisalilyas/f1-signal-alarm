@@ -1,0 +1,441 @@
+// F1 Scalper Pro — JS port of the Pine v5 script.
+// Walks every bar exactly like Pine so state/TP/SL match the chart.
+
+import { ema, sma, rsi, macd, atr, adx, lowest, highest, emaNext, crossPrice } from './indicators.js';
+import { VP_DEFAULTS, buildProfile, pickTargets, atNode } from './volumeprofile.js';
+import { calibrate } from './calibrate.js';
+
+export const DEFAULTS = {
+  emaFast: 9, emaSlow: 21,
+  rsiLen: 14, rsiOB: 70, rsiOS: 30,
+  macdFast: 12, macdSlow: 26, macdSignal: 9,
+  volLen: 20, volMult: 1.5,
+  requireVol: false, useTrend: false, trendLen: 200,
+  useAtrFilter: false, minAtrPct: 0.10, rsiTwoSided: false, cooldown: 0,
+  atrLen: 14, slMode: 'Auto', slLookback: 3, slAtrMult: 1.2,
+  slBuf: 0.25, minRiskAtr: 0.35, rr1: 1.0, rr2: 2.0,
+  useRevExit: true, revOnlyInProfit: true, beAfterTp1: true, maxBars: 40,
+  tp1Portion: 0.5,          // fraction of the position banked at TP1
+  noStop: false,            // no protective stop: hold until the trail engages or the signal flips
+  runner: true,             // no fixed TP2 — bank part at TP1, trail the rest
+  minAdx: 20,               // skip entries unless trend strength clears this
+  minEmaSep: 0,             // ...and the EMAs have separated by this % of price
+  maxRecentSignals: 0,      // ...and there haven't been this many signals lately (chop guard)
+  recentWindow: 30,
+  rsiPeakExit: true,        // close into an RSI extreme that has started rolling over
+  rsiPeakLong: 75, rsiPeakShort: 25, rsiPeakDrop: 5,
+  minVol1h: 0,              // skip entries unless the 1h range is at least this %
+  minVol1d: 0,              // ...and the 24h range at least this %
+  tp1AtR: 0.5,              // also bank at this R if it comes before the shelf
+  autoCoverage: 0.85,       // stop must clear this share of winners' pullbacks
+  beAtR: 1.0,               // move the stop to entry once the trade reaches this R
+  useTrail: true,           // trail the stop behind the running high/low
+  trailAfterR: 1.5,         // start trailing once this R is reached
+  trailAtr: 2.5,            // trail distance, in ATR
+  preAlertPct: 0.35,        // warn when price is this % from the trigger
+  preAlertBars: 3,          // ...or when the cross is this many bars away
+  ...VP_DEFAULTS            // tpMode, vpLen, vpRows, vaPct, hvnThr, minTpAtr, fallbackRR
+};
+
+export function analyze(candles, userCfg = {}) {
+  const cfg = { ...DEFAULTS, ...userCfg };
+  const n = candles.length;
+  if (n < Math.max(cfg.emaSlow, cfg.macdSlow, cfg.rsiLen, cfg.atrLen) + 30) return null;
+
+  const open = candles.map(c => c.o), high = candles.map(c => c.h);
+  const low = candles.map(c => c.l), close = candles.map(c => c.c), vol = candles.map(c => c.v);
+
+  const eF = ema(close, cfg.emaFast), eS = ema(close, cfg.emaSlow), eT = ema(close, cfg.trendLen);
+  const r = rsi(close, cfg.rsiLen);
+  const m = macd(close, cfg.macdFast, cfg.macdSlow, cfg.macdSignal);
+  const a = atr(high, low, close, cfg.atrLen);
+  const vMa = sma(vol, cfg.volLen);
+  const dmi = adx(high, low, close, 14);
+  const adxS = dmi.adx;
+
+  const ready = i => eF[i] !== null && eS[i] !== null && r[i] !== null && m.signal[i] !== null && a[i] !== null && vMa[i] !== null;
+
+  // Regime: the same range-over-low measure the volatility board ranks by,
+  // computed from this series so it can be tested bar by bar.
+  const barMs = candles.length > 1 ? candles[1].t - candles[0].t : 300000;
+  const perHour = Math.max(1, Math.round(3600000 / barMs));
+  const perDay = Math.max(1, Math.round(86400000 / barMs));
+  const rangePct = (i, span) => {
+    const from = i - span + 1;
+    if (from < 0) return null;
+    let hi = -Infinity, lo = Infinity;
+    for (let k = from; k <= i; k++) { if (high[k] > hi) hi = high[k]; if (low[k] < lo) lo = low[k]; }
+    return lo > 0 ? (hi - lo) / lo * 100 : null;
+  };
+  const vol1hAt = i => rangePct(i, perHour);
+  const vol1dAt = i => rangePct(i, perDay);
+  // A threshold can't be enforced on history we don't have — don't silently
+  // drop every signal when the window is shorter than a day.
+  // In a chop the EMAs sit on top of each other and cross repeatedly; in a run
+  // they separate and stay apart. ADX measures the same thing independently.
+  const emaSepPct = i => (eF[i] === null || eS[i] === null) ? null : Math.abs(eF[i] - eS[i]) / close[i] * 100;
+  const recentSignalCount = i => {
+    let c = 0;
+    for (let k = Math.max(1, i - cfg.recentWindow); k < i; k++) {
+      if (!ready(k) || !ready(k - 1)) continue;
+      if ((eF[k - 1] <= eS[k - 1] && eF[k] > eS[k]) || (eF[k - 1] >= eS[k - 1] && eF[k] < eS[k])) c++;
+    }
+    return c;
+  };
+  const chopOk = i => {
+    if (cfg.minAdx > 0 && (adxS[i] === null || adxS[i] < cfg.minAdx)) return false;
+    if (cfg.minEmaSep > 0) { const sep = emaSepPct(i); if (sep === null || sep < cfg.minEmaSep) return false; }
+    if (cfg.maxRecentSignals > 0 && recentSignalCount(i) > cfg.maxRecentSignals) return false;
+    return true;
+  };
+
+  const regimeOk = i => {
+    if (cfg.minVol1h > 0) { const v = vol1hAt(i); if (v !== null && v < cfg.minVol1h) return false; }
+    if (cfg.minVol1d > 0) { const v = vol1dAt(i); if (v !== null && v < cfg.minVol1d) return false; }
+    return true;
+  };
+
+  // ── per-bar condition helpers (mirrors the Pine booleans) ──
+  const crossUp = i => i > 0 && ready(i) && ready(i - 1) && eF[i - 1] <= eS[i - 1] && eF[i] > eS[i];
+  const crossDn = i => i > 0 && ready(i) && ready(i - 1) && eF[i - 1] >= eS[i - 1] && eF[i] < eS[i];
+  const macdBull = i => m.line[i] > m.signal[i];
+  const macdBear = i => m.line[i] < m.signal[i];
+  const volSpike = i => vol[i] > vMa[i] * cfg.volMult;
+  const atrPct = i => (a[i] / close[i]) * 100;
+
+  const longBase = i => crossUp(i) && r[i] > cfg.rsiOS && macdBull(i);
+  const shortBase = i => crossDn(i) && r[i] < cfg.rsiOB && macdBear(i);
+
+  const trendOkL = i => !cfg.useTrend || (eT[i] !== null && close[i] > eT[i]);
+  const trendOkS = i => !cfg.useTrend || (eT[i] !== null && close[i] < eT[i]);
+  const atrOk = i => !cfg.useAtrFilter || atrPct(i) >= cfg.minAtrPct;
+  const volOk = i => !cfg.requireVol || volSpike(i);
+  const rsiOkL = i => !cfg.rsiTwoSided || r[i] < cfg.rsiOB;
+  const rsiOkS = i => !cfg.rsiTwoSided || r[i] > cfg.rsiOS;
+
+  const longSig = i => longBase(i) && rsiOkL(i) && trendOkL(i) && atrOk(i) && volOk(i) && regimeOk(i) && chopOk(i);
+  const shortSig = i => shortBase(i) && rsiOkS(i) && trendOkS(i) && atrOk(i) && volOk(i) && regimeOk(i) && chopOk(i);
+
+  // ── reversal candles ──
+  const body = i => Math.abs(close[i] - open[i]);
+  const upW = i => high[i] - Math.max(close[i], open[i]);
+  const loW = i => Math.min(close[i], open[i]) - low[i];
+  const hammer = i => loW(i) >= body(i) * 2 && upW(i) <= body(i) && close[i] > open[i];
+  const star = i => upW(i) >= body(i) * 2 && loW(i) <= body(i) && close[i] < open[i];
+  const bullEng = i => i > 0 && close[i] > open[i] && close[i - 1] < open[i - 1] && close[i] > open[i - 1] && open[i] < close[i - 1];
+  const bearEng = i => i > 0 && close[i] < open[i] && close[i - 1] > open[i - 1] && close[i] < open[i - 1] && open[i] > close[i - 1];
+  const macdXdn = i => i > 0 && m.line[i - 1] >= m.signal[i - 1] && m.line[i] < m.signal[i];
+  const macdXup = i => i > 0 && m.line[i - 1] <= m.signal[i - 1] && m.line[i] > m.signal[i];
+  const bearRev = i => star(i) || bearEng(i) || macdXdn(i) || (r[i] > cfg.rsiOB && close[i] < open[i]) || crossDn(i);
+  const bullRev = i => hammer(i) || bullEng(i) || macdXup(i) || (r[i] < cfg.rsiOS && close[i] > open[i]) || crossUp(i);
+
+  // Name the stop for what it actually was, so the history reads at a glance.
+  const stopLabel = (tp1, be, sl, entry) => {
+    const beyondEntry = pos === 1 ? sl > entry : sl < entry;
+    if (beyondEntry) return tp1 ? 'TP1 HIT → TRAIL' : 'TRAIL STOP';
+    if (sl === entry) return tp1 ? 'TP1 HIT → BE' : 'BE STOP';
+    return tp1 ? 'TP1 HIT → SL' : 'SL HIT';
+  };
+
+  // Where does price actually go against a signal that ends up working? The stop
+  // belongs just past that, not at an arbitrary swing low.
+  const cal = cfg.slMode === 'Auto'
+    ? calibrate(candles, { ...cfg, coverage: cfg.autoCoverage, workedAtr: 2.0 })
+    : null;
+
+  // A momentum flip (EMA/MACD cross) always counts. A lone candle pattern only
+  // counts when it lands on a volume shelf — otherwise it's noise.
+  const momentumFlip = (i, dir) => dir === 1 ? (macdXdn(i) || crossDn(i)) : (macdXup(i) || crossUp(i));
+  const onShelf = (i, dir) => atNode(entryProf, dir === 1 ? high[i] : low[i], a[i] * 0.6);
+  const revConfirmed = (i, dir) =>
+    cfg.tpMode !== 'profile' || momentumFlip(i, dir) || onShelf(i, dir);
+  const revTag = (i, dir) =>
+    (cfg.tpMode === 'profile' && !momentumFlip(i, dir) && onShelf(i, dir)) ? 'TP REVERSAL @ NODE' : 'TP REVERSAL';
+
+  // ── state machine over closed bars ──
+  const lastClosed = candles[n - 1].closed ? n - 1 : n - 2;
+  let pos = 0, entryP = null, slP = null, slInit = null, tp1P = null, tp2P = null;
+  let entryBar = null, tp1Done = false, lastExit = -9999;
+  let entryProf = null;
+  let mfePx = null, maePx = null, beDone = false, tp2Hit = false;
+  let rsiPeak = null;
+  const trades = [];
+  let openTrade = null;
+
+  for (let i = 0; i <= lastClosed; i++) {
+    if (!ready(i)) continue;
+    let exitPx = null, exitTag = '', flip = false;
+
+    if (pos === 1) {
+      if (slP !== null && low[i] <= slP) { exitPx = Math.min(slP, open[i]); exitTag = stopLabel(tp1Done, beDone, slP, entryP); }
+      else if (tp2P !== null && high[i] >= tp2P) { exitPx = tp2P; tp2Hit = true; exitTag = 'TP2 HIT'; }
+      else {
+        if (!tp1Done && high[i] >= tp1P) { tp1Done = true; if (cfg.beAfterTp1) slP = entryP; }
+
+        // Ratchet the stop using this bar's extreme, but only AFTER the stop has
+        // been tested above — otherwise a bar's high would protect against its
+        // own low. A trade that ran to +1R and came back should not book -1R.
+        mfePx = Math.max(mfePx, high[i]);
+        maePx = Math.min(maePx, low[i]);
+        const mfeR = (mfePx - entryP) / (entryP - slInit);
+        if (!beDone && mfeR >= cfg.beAtR) { slP = Math.max(slP ?? -Infinity, entryP); beDone = true; }
+        if (cfg.useTrail && mfeR >= cfg.trailAfterR) slP = Math.max(slP ?? -Infinity, mfePx - a[i] * cfg.trailAtr);
+
+        if (i > entryBar) {
+          // Close into the peak: RSI has to reach an extreme AND start rolling
+          // over. The extreme alone just means strength.
+          if (cfg.rsiPeakExit && r[i] >= cfg.rsiPeakLong) rsiPeak = Math.max(rsiPeak ?? 0, r[i]);
+          if (cfg.rsiPeakExit && rsiPeak !== null && r[i] <= rsiPeak - cfg.rsiPeakDrop && close[i] > entryP) {
+            exitPx = close[i]; exitTag = 'RSI PEAK';
+          }
+          else if (cfg.useRevExit && bearRev(i) && revConfirmed(i, 1) && (!cfg.revOnlyInProfit || close[i] > entryP)) { exitPx = close[i]; exitTag = revTag(i, 1); flip = shortSig(i); }
+          else if (shortSig(i)) { exitPx = close[i]; exitTag = 'FLIP'; flip = true; }
+          else if (cfg.maxBars > 0 && i - entryBar >= cfg.maxBars) { exitPx = close[i]; exitTag = 'TIME'; }
+        }
+      }
+    } else if (pos === -1) {
+      if (slP !== null && high[i] >= slP) { exitPx = Math.max(slP, open[i]); exitTag = stopLabel(tp1Done, beDone, slP, entryP); }
+      else if (tp2P !== null && low[i] <= tp2P) { exitPx = tp2P; tp2Hit = true; exitTag = 'TP2 HIT'; }
+      else {
+        if (!tp1Done && low[i] <= tp1P) { tp1Done = true; if (cfg.beAfterTp1) slP = entryP; }
+
+        mfePx = Math.min(mfePx, low[i]);
+        maePx = Math.max(maePx, high[i]);
+        const mfeR = (entryP - mfePx) / (slInit - entryP);
+        if (!beDone && mfeR >= cfg.beAtR) { slP = Math.min(slP ?? Infinity, entryP); beDone = true; }
+        if (cfg.useTrail && mfeR >= cfg.trailAfterR) slP = Math.min(slP ?? Infinity, mfePx + a[i] * cfg.trailAtr);
+
+        if (i > entryBar) {
+          if (cfg.rsiPeakExit && r[i] <= cfg.rsiPeakShort) rsiPeak = Math.min(rsiPeak ?? 100, r[i]);
+          if (cfg.rsiPeakExit && rsiPeak !== null && r[i] >= rsiPeak + cfg.rsiPeakDrop && close[i] < entryP) {
+            exitPx = close[i]; exitTag = 'RSI PEAK';
+          }
+          else if (cfg.useRevExit && bullRev(i) && revConfirmed(i, -1) && (!cfg.revOnlyInProfit || close[i] < entryP)) { exitPx = close[i]; exitTag = revTag(i, -1); flip = longSig(i); }
+          else if (longSig(i)) { exitPx = close[i]; exitTag = 'FLIP'; flip = true; }
+          else if (cfg.maxBars > 0 && i - entryBar >= cfg.maxBars) { exitPx = close[i]; exitTag = 'TIME'; }
+        }
+      }
+    }
+
+    if (exitPx !== null) {
+      const rAt = px => pos === 1 ? (px - entryP) / (entryP - slInit) : (entryP - px) / (slInit - entryP);
+      const pctAt = px => ((pos === 1 ? px - entryP : entryP - px) / entryP) * 100;
+      // TP1 takes a slice off the table, so only the remainder rides to the final
+      // exit. Without this, a stop that trailed to breakeven after TP1 books 0R —
+      // which reports a trade that actually banked profit as a scratch.
+      const part = tp1Done ? Math.min(1, Math.max(0, cfg.tp1Portion)) : 0;
+      const rMult = part * rAt(tp1P) + (1 - part) * rAt(exitPx);
+      const pnlPct = part * pctAt(tp1P) + (1 - part) * pctAt(exitPx);
+      const peakR = mfePx === null ? 0 : rAt(mfePx);
+      const troughR = maePx === null ? 0 : rAt(maePx);
+      const troughPct = maePx === null ? 0 : pctAt(maePx);
+      trades.push({
+        ...openTrade, exitBar: i, exitTime: candles[i].t, exitPrice: exitPx, reason: exitTag,
+        r: rMult, pnlPct, tp1Filled: tp1Done, tp1Portion: part,
+        tp1Hit: tp1Done, tp2Hit, peakR, peakPct: mfePx === null ? 0 : pctAt(mfePx),
+        troughR, troughPct,
+        gaveBack: peakR - rMult,
+        rFinalLeg: rAt(exitPx), pctFinalLeg: pctAt(exitPx)
+      });
+      pos = 0; tp1Done = false; beDone = false; tp2Hit = false; mfePx = null; maePx = null; lastExit = i; openTrade = null;
+    }
+
+    const canEnter = pos === 0 && (flip || i - lastExit >= cfg.cooldown);
+    if (canEnter && (longSig(i) || shortSig(i))) {
+      const dir = longSig(i) ? 1 : -1;
+      let raw;
+      if (dir === 1) {
+        const auto = cal?.stopAtr ? close[i] - a[i] * cal.stopAtr : null;
+        const base = cfg.slMode === 'Auto' ? (auto ?? lowest(low, cfg.slLookback, i))
+          : cfg.slMode === 'Prev candle' ? low[i - 1]
+          : cfg.slMode === 'Swing' ? lowest(low, cfg.slLookback, i)
+          : close[i] - a[i] * cfg.slAtrMult;
+        raw = (cfg.slMode === 'ATR' || (cfg.slMode === 'Auto' && auto)) ? base : Math.min(base, low[i]) - a[i] * cfg.slBuf;
+      } else {
+        const auto = cal?.stopAtr ? close[i] + a[i] * cal.stopAtr : null;
+        const base = cfg.slMode === 'Auto' ? (auto ?? highest(high, cfg.slLookback, i))
+          : cfg.slMode === 'Prev candle' ? high[i - 1]
+          : cfg.slMode === 'Swing' ? highest(high, cfg.slLookback, i)
+          : close[i] + a[i] * cfg.slAtrMult;
+        raw = (cfg.slMode === 'ATR' || (cfg.slMode === 'Auto' && auto)) ? base : Math.max(base, high[i]) + a[i] * cfg.slBuf;
+      }
+      entryP = close[i];
+      let risk;
+      if (cfg.noStop) {
+        // No protective stop. R is measured in ATR so results stay comparable,
+        // but nothing is armed until the trail engages or the signal flips.
+        risk = a[i];
+        slInit = dir === 1 ? entryP - risk : entryP + risk;
+        slP = null;
+      } else {
+        risk = Math.max(dir === 1 ? entryP - raw : raw - entryP, a[i] * cfg.minRiskAtr);
+        slP = dir === 1 ? entryP - risk : entryP + risk;
+        slInit = slP;
+      }
+
+      // Targets off the volume profile: the next two shelves ahead of entry.
+      // The profile is built once, at entry, and kept for the life of the trade —
+      // levels you mark going in are the levels you trade against.
+      let tpSource;
+      if (cfg.runner) {
+        // TP1 banks a slice at the first volume shelf ahead; the rest has no
+        // ceiling and comes off via the trail. Capping at 2R throws away the
+        // moves that pay for everything else.
+        entryProf = buildProfile(candles, i, cfg);
+        const t = pickTargets(entryProf, entryP, dir, a[i] * cfg.minTpAtr, risk, cfg.fallbackRR);
+        // Bank at whichever comes first: the shelf, or a fixed R. Taking the
+        // nearer one books profit on more trades, at the cost of a smaller slice
+        // riding the big moves.
+        const rTarget = cfg.tp1AtR > 0 ? (dir === 1 ? entryP + risk * cfg.tp1AtR : entryP - risk * cfg.tp1AtR) : null;
+        tp1P = rTarget === null ? t.tp1 : (dir === 1 ? Math.min(t.tp1, rTarget) : Math.max(t.tp1, rTarget));
+        tp2P = null;
+        tpSource = (rTarget !== null && tp1P === rTarget ? `${cfg.tp1AtR}R` : t.source.split(' → ')[0]) + ' → runner';
+      } else if (cfg.tpMode === 'profile') {
+        entryProf = buildProfile(candles, i, cfg);
+        const t = pickTargets(entryProf, entryP, dir, a[i] * cfg.minTpAtr, risk, cfg.fallbackRR);
+        tp1P = t.tp1; tp2P = t.tp2; tpSource = t.source;
+      } else {
+        entryProf = null;
+        tp1P = dir === 1 ? entryP + risk * cfg.rr1 : entryP - risk * cfg.rr1;
+        tp2P = dir === 1 ? entryP + risk * cfg.rr2 : entryP - risk * cfg.rr2;
+        tpSource = `${cfg.rr1}R \u2192 ${cfg.rr2}R`;
+      }
+
+      pos = dir; entryBar = i; tp1Done = false; beDone = false; tp2Hit = false;
+      mfePx = close[i];
+      maePx = close[i];
+      rsiPeak = null;
+      openTrade = {
+        side: dir === 1 ? 'LONG' : 'SHORT', entryBar: i, entryTime: candles[i].t,
+        vol1h: vol1hAt(i), vol1d: vol1dAt(i), atrPctAtEntry: atrPct(i),
+        entryPrice: entryP, sl: slP, tp1: tp1P, tp2: tp2P, tpSource,
+        riskPct: (risk / entryP) * 100, volConfirmed: volSpike(i),
+        tp1Pct: (Math.abs(tp1P - entryP) / entryP) * 100,
+        tp2Pct: (Math.abs(tp2P - entryP) / entryP) * 100
+      };
+    }
+  }
+
+  const li = lastClosed;
+  const px = close[n - 1];
+  const livePart = pos !== 0 && tp1Done ? Math.min(1, Math.max(0, cfg.tp1Portion)) : 0;
+  const liveRAt = p2 => pos === 1 ? (p2 - entryP) / (entryP - slInit) : (entryP - p2) / (slInit - entryP);
+  const livePctAt = p2 => ((pos === 1 ? p2 - entryP : entryP - p2) / entryP) * 100;
+  const position = pos !== 0 ? {
+    ...openTrade, sl: slP, tp1: tp1P, tp2: tp2P, tp1Done, tp1Portion: livePart,
+    barsHeld: li - entryBar,
+    livePnlPct: livePart * livePctAt(tp1P) + (1 - livePart) * livePctAt(px),
+    liveR: livePart * liveRAt(tp1P) + (1 - livePart) * liveRAt(px),
+    peakR: mfePx === null ? 0 : liveRAt(mfePx),
+    trailing: beDone
+  } : null;
+
+  const wins = trades.filter(t => t.r > 0).length;
+  const green = trades.filter(t => t.r >= -0.02).length;   // profit or scratch
+  const stats = {
+    trades: trades.length, wins, losses: trades.length - wins,
+    green, greenRate: trades.length ? (green / trades.length) * 100 : 0,
+    winRate: trades.length ? (wins / trades.length) * 100 : 0,
+    totalR: trades.reduce((s, t) => s + t.r, 0),
+    avgR: trades.length ? trades.reduce((s, t) => s + t.r, 0) / trades.length : 0,
+    // R normalises by the stop, so a positive R sum can still be a negative
+    // percentage sum when losses happen on wide stops. Show both.
+    totalPct: trades.reduce((s, t) => s + t.pnlPct, 0),
+    avgWinPct: (() => { const w = trades.filter(t => t.r > 0); return w.length ? w.reduce((s, t) => s + t.pnlPct, 0) / w.length : 0; })(),
+    avgLossPct: (() => { const l = trades.filter(t => t.r <= 0); return l.length ? l.reduce((s, t) => s + t.pnlPct, 0) / l.length : 0; })(),
+    worstUnderwaterPct: trades.reduce((m, t) => Math.min(m, t.troughPct ?? 0), 0)
+  };
+
+  const liveProf = cfg.tpMode === 'profile' ? buildProfile(candles, li, cfg) : null;
+
+  return {
+    price: px,
+    calibration: cal && {
+      signals: cal.signals, worked: cal.worked, workRate: cal.workRate,
+      stopAtr: cal.stopAtr, stopPct: cal.stopAtr * (a[li] / px) * 100,
+      maeWinP80: cal.maeWinP80, mfeWinP50: cal.mfeWinP50, mfeWinP90: cal.mfeWinP90,
+      medianWinPct: cal.mfeWinP50 * (a[li] / px) * 100,
+      bigWinPct: cal.mfeWinP90 * (a[li] / px) * 100,
+      impliedR: cal.impliedR,
+      // A stop only exists if you survive to reach it. Past 100/stopPct× the
+      // liquidation price sits inside the stop, so the stop never fills.
+      liqLev: Math.floor(100 / (cal.stopAtr * (a[li] / px) * 100)),
+      safeLev: Math.max(1, Math.floor(40 / (cal.stopAtr * (a[li] / px) * 100)))
+    },
+    profile: liveProf && {
+      poc: liveProf.poc, vah: liveProf.vah, val: liveProf.val,
+      hi: liveProf.hi, lo: liveProf.lo,
+      nodes: liveProf.nodes,
+      rows: liveProf.rows.map(x => ({ p: x.price, s: x.share, va: x.inVA, h: x.isHVN, poc: x.isPOC })),
+      atNode: atNode(liveProf, px, a[li] * 0.6)
+    },
+    regime: { vol1h: vol1hAt(li), vol1d: vol1dAt(li), ok: regimeOk(li) && chopOk(li),
+              adx: adxS[li], emaSep: emaSepPct(li), recentSignals: recentSignalCount(li) },
+    atr: a[li], atrPct: atrPct(li), rsi: r[li],
+    emaFast: eF[li], emaSlow: eS[li], emaTrend: eT[li],
+    macdLine: m.line[li], macdSignal: m.signal[li], macdHist: m.hist[li],
+    volRatio: vol[n - 1] / vMa[li],
+    position, trades, stats,
+    lastClosedBar: li, lastClosedTime: candles[li].t,
+    forecast: forecast({ cfg, candles, li, eF, eS, eT, r, m, a, vMa, close, pos })
+  };
+}
+
+// ══════════════ PRE-ALERT: how close is the next signal? ══════════════
+// Two answers: (1) the exact price that triggers it on THIS bar,
+// (2) how many bars away the cross is if price just keeps drifting.
+function forecast({ cfg, candles, li, eF, eS, eT, r, m, a, vMa, close, pos }) {
+  const price = close[close.length - 1];
+  const pf = eF[li], ps = eS[li];
+  if (pf === null || ps === null) return null;
+
+  const side = pf <= ps ? 'LONG' : 'SHORT';   // a cross can only go the way the gap is
+  const trigger = crossPrice(pf, ps, cfg.emaFast, cfg.emaSlow);
+  if (trigger === null || !isFinite(trigger)) return null;
+
+  const distPct = ((trigger - price) / price) * 100;
+
+  // Would the non-EMA gates allow it right now?
+  const conditions = {
+    ema: true,
+    rsi: side === 'LONG'
+      ? r[li] > cfg.rsiOS && (!cfg.rsiTwoSided || r[li] < cfg.rsiOB)
+      : r[li] < cfg.rsiOB && (!cfg.rsiTwoSided || r[li] > cfg.rsiOS),
+    macd: side === 'LONG' ? m.line[li] > m.signal[li] : m.line[li] < m.signal[li],
+    volume: !cfg.requireVol || (candles[candles.length - 1].v > vMa[li] * cfg.volMult),
+    trend: !cfg.useTrend || (eT[li] !== null && (side === 'LONG' ? price > eT[li] : price < eT[li])),
+    atr: !cfg.useAtrFilter || (a[li] / price) * 100 >= cfg.minAtrPct
+  };
+  const gatesOpen = conditions.rsi && conditions.macd && conditions.volume && conditions.trend && conditions.atr;
+
+  // Bars-to-cross from the EMA spread's own slope
+  let barsToCross = null;
+  if (li >= 2 && eF[li - 1] !== null) {
+    const spread = pf - ps, prevSpread = eF[li - 1] - eS[li - 1];
+    const slope = spread - prevSpread;
+    if (Math.abs(slope) > 1e-12 && Math.sign(spread) !== Math.sign(spread + slope * 20)) {
+      const b = -spread / slope;
+      if (b > 0 && b < 50) barsToCross = b;
+    }
+  }
+
+  // MACD histogram convergence — the other half of "about to fire"
+  const histNow = m.hist[li], histPrev = m.hist[li - 1];
+  const macdConverging = histNow !== null && histPrev !== null &&
+    (side === 'LONG' ? histNow > histPrev : histNow < histPrev);
+
+  // Readiness 0-100: mostly distance, plus gate credit
+  const distScore = Math.max(0, 100 - (Math.abs(distPct) / cfg.preAlertPct) * 50);
+  const gateScore = [conditions.rsi, conditions.macd, conditions.volume, conditions.trend, conditions.atr]
+    .filter(Boolean).length / 5 * 100;
+  const readiness = Math.round(distScore * 0.65 + gateScore * 0.35);
+
+  const imminent = pos === 0 && gatesOpen &&
+    (Math.abs(distPct) <= cfg.preAlertPct || (barsToCross !== null && barsToCross <= cfg.preAlertBars));
+
+  return {
+    side, triggerPrice: trigger, distancePct: distPct,
+    barsToCross, macdConverging, conditions, gatesOpen, readiness, imminent,
+    msToBarClose: Math.max(0, candles[candles.length - 1].closeTime - Date.now())
+  };
+}

@@ -8,7 +8,8 @@
     "start": "node server.js",
     "keys": "node -e \"import('web-push').then(w=>{const k=w.default.generateVAPIDKeys();console.log('VAPID_PUBLIC='+k.publicKey);console.log('VAPID_PRIVATE='+k.privateKey)})\"",
     "telegram": "node setup-telegram.js",
-    "sync-cloud": "node tools/sync-cloud.js"
+    "sync-cloud": "node tools/sync-cloud.js",
+    "build:web": "node tools/build-web.js"
   },
   "dependencies": {
     "express": "^4.19.2",

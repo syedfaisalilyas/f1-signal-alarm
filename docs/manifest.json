@@ -1,0 +1,11 @@
+{
+  "name": "F1 Signal Alarm",
+  "short_name": "F1 Alarm",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#0b0e14",
+  "theme_color": "#0b0e14",
+  "icons": [
+    { "src": "/icon.png", "sizes": "512x512", "type": "image/png", "purpose": "any maskable" }
+  ]
+}

@@ -14,11 +14,13 @@ import path from 'path';
 import { fetchCandles, feedSources } from './src/providers.js';
 import { analyze } from './src/strategy.js';
 import { buildMessage, dispatch, initPush } from './src/notify.js';
+import { refresh as refreshLeverage, dump as leverageDump } from './src/leverage.js';
 
 const DIR = path.join(process.cwd(), 'cloud');
 const STATE = path.join(DIR, 'state.json');
 const WATCHLIST = path.join(DIR, 'watchlist.json');
 const SNAPSHOT = path.join(DIR, 'snapshot.json');
+const LEVERAGE = path.join(DIR, 'leverage.json');
 const BARS = 600;
 
 const cfgFile = JSON.parse(fs.readFileSync(WATCHLIST, 'utf8'));
@@ -30,6 +32,10 @@ const settings = cfgFile.settings || {};
 const globalCfg = settings.cfg || {};
 
 initPush();
+
+// Published for the browser build: MEXC has no CORS headers, so the page can't
+// fetch this itself.
+await refreshLeverage().catch(() => {});
 
 const fired = [];
 const rows = [];
@@ -123,5 +129,8 @@ fs.writeFileSync(SNAPSHOT, JSON.stringify({
   alerts: state.log.slice(0, 40),
   watches: rows
 }, null, 2));
+
+const lev = leverageDump();
+if (Object.keys(lev).length) fs.writeFileSync(LEVERAGE, JSON.stringify(lev));
 
 console.log(`[scan] ${rows.length} watch(es), ${fired.length} alert(s), sources ${JSON.stringify(feedSources())}`);
