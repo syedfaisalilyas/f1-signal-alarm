@@ -19,6 +19,7 @@ import { VolatilityScanner } from './src/volatility.js';
 import { Screener } from './src/screener.js';
 import { hydrate as hydrateLeverage, setOverrides } from './src/leverage.js';
 import { buildMessage } from './src/notify.js';
+import { filterTrades, aggregate, coverage } from './src/history.js';
 
 // ─── persistence: localStorage instead of data/state.json ───
 const KEY = 'f1cloudstate';
@@ -142,28 +143,24 @@ const json = (body, status = 200) =>
 async function history(id, params) {
   const w = state.watches.find(x => x.id === id);
   if (!w) return json({ error: 'not watching that symbol' }, 404);
+
   const limit = Math.min(200, Math.max(5, Number(params.get('limit')) || 20));
   const minVol1h = Number(params.get('minVol1h')) || 0;
+  const side = params.get('side') === 'LONG' || params.get('side') === 'SHORT' ? params.get('side') : null;
+  const from = Number(params.get('from')) || 0;
+  const to = Number(params.get('to')) || 0;
   const bars = limit <= 20 ? 1500 : limit <= 50 ? 3000 : 6000;
 
   const candles = await fetchCandlesDeep(w.market, w.symbol, w.interval, bars);
   const a = analyze(candles, { ...(state.settings.cfg || {}), ...(w.cfg || {}) });
   const all = [...(a ? a.trades : [])].reverse();
-  const filtered = minVol1h > 0 ? all.filter(t => t.vol1h !== null && t.vol1h >= minVol1h) : all;
+  const filtered = filterTrades(all, { side, from, to, minVol1h });
   const rows = filtered.slice(0, limit);
 
-  const n = rows.length;
-  const wins = rows.filter(t => t.r > 0).length;
-  const green = rows.filter(t => t.r >= -0.02).length;
-  const totalR = rows.reduce((s, t) => s + t.r, 0);
   return json({
     symbol: w.symbol, interval: w.interval, market: w.market,
     barsScanned: candles.length, totalTrades: all.length, matched: filtered.length,
-    stats: {
-      trades: n, wins, winRate: n ? wins / n * 100 : 0, greenRate: n ? green / n * 100 : 0,
-      totalR, avgR: n ? totalR / n : 0, totalPct: rows.reduce((s, t) => s + t.pnlPct, 0)
-    },
-    rows
+    covers: coverage(all), stats: aggregate(rows), rows
   });
 }
 

@@ -437,11 +437,16 @@ async function loadHistory() {
   if (!histId) return;
   const w = state.watches.find(x => x.id === histId);
   const limit = $('#histLimit').value, minVol = $('#histVol').value;
+  const side = $('#histSide').value;
+  // Date inputs are local days; the API works in epoch ms, so send the whole day.
+  const from = $('#histFrom').value ? new Date($('#histFrom').value + 'T00:00:00').getTime() : '';
+  const to = $('#histTo').value ? new Date($('#histTo').value + 'T23:59:59.999').getTime() : '';
   $('#histMeta').textContent = 'scanning history…';
   $('#histRows').innerHTML = '';
   $('#histStats').innerHTML = '';
   try {
-    const d = await apiJson(`/api/history/${encodeURIComponent(histId)}?limit=${limit}&minVol1h=${minVol}`);
+    const d = await apiJson(`/api/history/${encodeURIComponent(histId)}`
+      + `?limit=${limit}&minVol1h=${minVol}&side=${side}&from=${from}&to=${to}`);
     if (d.error) throw new Error(d.error);
     renderHistory(d, w?.maxLev);
   } catch (e) {
@@ -450,6 +455,14 @@ async function loadHistory() {
 }
 $('#histLimit').onchange = loadHistory;
 $('#histVol').onchange = loadHistory;
+$('#histSide').onchange = loadHistory;
+$('#histFrom').onchange = loadHistory;
+$('#histTo').onchange = loadHistory;
+$('#histClear').onclick = () => {
+  $('#histFrom').value = '';
+  $('#histTo').value = '';
+  loadHistory();
+};
 
 function renderHistory(d, lev) {
   const s2 = d.stats, trades = d.rows;
@@ -464,10 +477,33 @@ function renderHistory(d, lev) {
   ].map(([k, v]) => `<div class="hstat"><span>${k}</span><b class="${v.startsWith('-') ? 'down' : 'up'}">${v}</b></div>`).join('');
 
   const filt = $('#histVol').value;
+  const side = $('#histSide').value;
+  const day = ts => new Date(ts).toLocaleDateString([], { month: 'short', day: 'numeric' });
+  const bits = [];
+  if (filt > 0) bits.push(`1H range ≥ ${filt}%`);
+  if (side) bits.push(side.toLowerCase() + ' only');
+  if ($('#histFrom').value || $('#histTo').value) {
+    bits.push(`${$('#histFrom').value || 'start'} → ${$('#histTo').value || 'now'}`);
+  }
   $('#histMeta').innerHTML =
     `scanned ${d.barsScanned.toLocaleString()} candles · ${d.totalTrades} trades found` +
-    (filt > 0 ? ` · <b>${d.matched}</b> while 1H range ≥ ${filt}%` : '') +
+    (d.covers ? ` · covers ${day(d.covers.from)} – ${day(d.covers.to)}` : '') +
+    (bits.length ? ` · <b>${d.matched}</b> match ${bits.join(' + ')}` : '') +
     ` · showing ${trades.length}`;
+
+  // The window is limited by how many candles were fetched, so an empty result
+  // for an older range is a scan-depth problem, not an absence of trades.
+  const wantFrom = $('#histFrom').value ? new Date($('#histFrom').value + 'T00:00:00').getTime() : 0;
+  if (d.covers && wantFrom && wantFrom < d.covers.from) {
+    $('#histMeta').innerHTML +=
+      `<br><span class="warn">History only reaches back to ${day(d.covers.from)} at this scan depth — raise “Show” for a deeper scan.</span>`;
+  }
+
+  // Keep the pickers inside what actually exists.
+  if (d.covers) {
+    const iso = ts => new Date(ts).toISOString().slice(0, 10);
+    for (const el2 of [$('#histFrom'), $('#histTo')]) { el2.min = iso(d.covers.from); el2.max = iso(d.covers.to); }
+  }
 
   const body = $('#histRows');
   body.innerHTML = '';

@@ -31,7 +31,7 @@ for (const f of ['app.js', 'styles.css', 'sw.js', 'manifest.json', 'icon.png']) 
 const modules = [
   'feed.js', 'providers.js', 'geofeed.js', 'strategy.js', 'indicators.js',
   'volumeprofile.js', 'calibrate.js', 'volatility.js', 'screener.js',
-  'leverage.js', 'notify.js', 'trend.js'
+  'leverage.js', 'notify.js', 'trend.js', 'history.js'
 ];
 for (const m of modules) copy(path.join(root, 'src', m), path.join(out, 'src', m));
 

@@ -298,3 +298,12 @@ main{max-width:1400px;margin:0 auto;padding:0 16px}
   margin-top:7px; font-size:12px; color:var(--warn);
   background:rgba(255,176,46,.10); border-radius:9px; padding:6px 9px;
 }
+
+/* history: date range + direction filters */
+.histctl input[type="date"] {
+  background:var(--panel2); border:1px solid var(--line); color:var(--fg);
+  border-radius:8px; padding:5px 8px; font:inherit; font-size:12.5px;
+  color-scheme:dark;                 /* keeps the native picker on the dark theme */
+}
+.histctl input[type="date"]:invalid { color:var(--faint) }
+.histmeta .warn { color:var(--warn); font-size:12px }

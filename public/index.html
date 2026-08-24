@@ -154,6 +154,16 @@
           <option value="8">8%</option>
         </select>
       </label>
+      <label>Direction
+        <select id="histSide">
+          <option value="">long + short</option>
+          <option value="LONG">long only</option>
+          <option value="SHORT">short only</option>
+        </select>
+      </label>
+      <label>From <input type="date" id="histFrom"></label>
+      <label>To <input type="date" id="histTo"></label>
+      <button id="histClear" class="btn ghost" title="Clear the date range">clear dates</button>
     </div>
     <div id="histStats" class="hstats"></div>
     <div id="histMeta" class="histmeta"></div>
