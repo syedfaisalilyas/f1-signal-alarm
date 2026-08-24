@@ -94,6 +94,12 @@ Header **⚙** sets indicator params. Defaults match the corrected Pine script e
 filters OFF, original F1 entry logic, Swing stop, TP1 1R / TP2 2R, breakeven after TP1,
 reversal TP on, 40-bar time stop.
 
+Two gates that are **not** in the Pine script — the ADX chop guard (`Min ADX`) and the
+RSI-peak exit — ship **off**, so the app fires on the same bars your chart does. Turning
+`Min ADX` up suppresses entries when trend strength is weak: it cut roughly half the
+signals in testing and reduced aggregate losses, but it also blocks breakouts out of
+consolidation, which is where the large moves start. Both are in ⚙ if you want them.
+
 Indicator changes apply to **newly added** symbols. To re-tune one you're already watching,
 remove and re-add it.
 

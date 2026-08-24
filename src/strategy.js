@@ -18,11 +18,11 @@ export const DEFAULTS = {
   tp1Portion: 0.5,          // fraction of the position banked at TP1
   noStop: false,            // no protective stop: hold until the trail engages or the signal flips
   runner: true,             // no fixed TP2 — bank part at TP1, trail the rest
-  minAdx: 20,               // skip entries unless trend strength clears this
+  minAdx: 0,                // skip entries unless trend strength clears this (0 = off, as in the Pine)
   minEmaSep: 0,             // ...and the EMAs have separated by this % of price
   maxRecentSignals: 0,      // ...and there haven't been this many signals lately (chop guard)
   recentWindow: 30,
-  rsiPeakExit: true,        // close into an RSI extreme that has started rolling over
+  rsiPeakExit: false,       // close into an RSI extreme that has started rolling over
   rsiPeakLong: 75, rsiPeakShort: 25, rsiPeakDrop: 5,
   minVol1h: 0,              // skip entries unless the 1h range is at least this %
   minVol1d: 0,              // ...and the 24h range at least this %
