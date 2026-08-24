@@ -7,6 +7,7 @@ import { WS_URL, fetchCandles } from './providers.js';
 import { analyze } from './strategy.js';
 import { intervalMin } from './notify.js';
 import { maxLev } from './leverage.js';
+import { trendFor, TREND_TFS, isStale } from './trend.js';
 
 const MAX_BARS = 600;
 const ANALYZE_THROTTLE = 1500;
@@ -57,6 +58,29 @@ export class Feed extends EventEmitter {
     this.watchdog.unref?.();
   }
 
+  async refreshTrend(e) {
+    if (e.trendLoading) return;
+    e.trendLoading = true;
+    try {
+      const t = await trendFor(e.watch.market, e.watch.symbol);
+      if (t) { e.trend = t; this.emit('trend', e.watch.id, t); }
+    } catch { /* the card just keeps the previous read */ }
+    finally { e.trendLoading = false; }
+  }
+
+  // Higher timeframes move slowly, so this only wakes up to refresh what has
+  // gone stale rather than polling on the candle cadence.
+  startTrendWatch() {
+    if (this.trendTimer) return;
+    this.trendTimer = setInterval(() => {
+      for (const e of this.watches.values()) {
+        if (e.watch.market === 'forex') continue;
+        if (TREND_TFS.some(tf => isStale(e.watch.market, e.watch.symbol, tf))) this.refreshTrend(e);
+      }
+    }, 60000);
+    this.trendTimer.unref?.();
+  }
+
   async add(watch) {
     if (this.watches.has(watch.id)) return this.watches.get(watch.id);
     const entry = { watch, candles: [], last: null, marks: {}, error: null, loading: true };
@@ -78,6 +102,7 @@ export class Feed extends EventEmitter {
       this.emit('error', watch.id, e.message);
     }
     entry.lastTickAt = Date.now();
+    this.refreshTrend(entry);
     if (watch.market === 'forex') this.startPoll(entry);
     else this.syncSockets();
     return entry;
@@ -258,6 +283,7 @@ export class Feed extends EventEmitter {
       ...e.watch,
       loading: e.loading, error: e.error,
       maxLev: maxLev(e.watch.market, e.watch.symbol),
+      trend: e.trend || null,
       source: e.watch.market === 'forex' ? 'poll' : e.streamDead ? 'poll (stream blocked)' : 'stream',
       analysis: e.last ? slim(e.last) : null
     }));

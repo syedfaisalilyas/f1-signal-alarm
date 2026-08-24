@@ -151,6 +151,23 @@ function render() {
   $('#empty').classList.toggle('hidden', state.watches.length > 0);
   state.watches.forEach(w => grid.appendChild(buildCard(w)));
 }
+const TREND_ARROW = { UP: '▲', DOWN: '▼', FLAT: '–' };
+
+// The 15m/1h/4h read for the coin, so a scalp signal is seen in context.
+function trendRow(t) {
+  const cells = Object.entries(t.tfs).map(([tf, d]) => {
+    if (!d) return `<span class="tr none"><b>${tf}</b>—</span>`;
+    const cls = d.dir === 'UP' ? 'up' : d.dir === 'DOWN' ? 'down' : 'flat';
+    const move = `${d.changePct >= 0 ? '+' : ''}${d.changePct}%`;
+    return `<span class="tr ${cls}" title="${tf}: ${d.dir.toLowerCase()} · ADX ${d.adx ?? '—'} · EMA21/55 gap ${d.sep}% · ${move} over 55 bars">`
+      + `<b>${tf}</b>${TREND_ARROW[d.dir]}</span>`;
+  }).join('');
+  const bias = t.bias === 'MIXED'
+    ? '<span class="tr bias mixed" title="The timeframes disagree">mixed</span>'
+    : `<span class="tr bias ${t.bias.toLowerCase()}" title="All timeframes agree">${t.bias === 'UP' ? 'uptrend' : 'downtrend'}</span>`;
+  return el('div', 'trend', cells + bias);
+}
+
 function patchCard(w) {
   const old = document.getElementById('c_' + cssId(w.id));
   if (!old) return render();
@@ -192,6 +209,16 @@ function buildCard(w) {
     : f?.imminent ? `<span class="badge b-form">⏳ ${f.side} forming</span>`
     : `<span class="badge b-flat">flat</span>`;
   card.appendChild(el('div', 'px', `<span class="v">${fmtPx(a.price)}</span>${badge}`));
+
+  if (w.trend) {
+    card.appendChild(trendRow(w.trend));
+    // Worth saying out loud: the setup and the higher timeframes disagree.
+    const side = p?.side || (f?.imminent ? f.side : null);
+    if (side && w.trend.bias !== 'MIXED' && side !== (w.trend.bias === 'UP' ? 'LONG' : 'SHORT')) {
+      card.appendChild(el('div', 'counter',
+        `⚠ ${side.toLowerCase()} against a higher-timeframe ${w.trend.bias === 'UP' ? 'uptrend' : 'downtrend'}`));
+    }
+  }
 
   if (p) {
     // ── open position: levels + progress between SL and TP2 ──

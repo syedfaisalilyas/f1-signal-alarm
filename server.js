@@ -83,6 +83,7 @@ wss.on('connection', (ws, req) => {
 feed.on('update', (id, a) => broadcast('tick', { id, analysis: slimForUi(a) }));
 feed.on('error', (id, error) => broadcast('werror', { id, error }));
 feed.on('status', (market, status) => broadcast('status', { market, status }));
+feed.on('trend', () => broadcast('watches', feed.snapshot()));
 
 feed.on('signal', async (kind, watch, a) => {
   const s = store.get().settings;
@@ -360,6 +361,7 @@ server.listen(PORT, async () => {
   const watches = store.get().watches;
   for (const w of watches) await feed.add(w);
   feed.startWatchdog();
+  feed.startTrendWatch();
   startLowVolWatch();
 
   // Warm the board so the first browser request is served from cache instead of

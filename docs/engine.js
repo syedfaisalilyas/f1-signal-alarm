@@ -104,6 +104,7 @@ globalThis.WebSocket.prototype = NativeWS.prototype;
 // ─── feed events, wired exactly as server.js wires them ───
 feed.on('update', (id, a) => broadcast('tick', { id, analysis: slim(a) }));
 feed.on('error', (id, error) => broadcast('werror', { id, error }));
+feed.on('trend', () => broadcast('watches', feed.snapshot()));
 
 feed.on('signal', (kind, watch, a) => {
   const s = state.settings;
@@ -303,6 +304,7 @@ globalThis.fetch = async (input, init = {}) => {
 // polling — and Binance's futures stream is silent on plenty of networks: it
 // accepts the handshake, acks the subscription, then sends no candles at all.
 feed.startWatchdog();
+feed.startTrendWatch();
 
 for (const w of state.watches) feed.add(w).catch(() => { /* reported through werror */ });
 queueMicrotask(() => broadcast('watches', feed.snapshot()));
