@@ -102,6 +102,28 @@ export function buildMessage(kind, w, a) {
     };
   }
 
+  // TP1 filled: half the position is banked and the stop moves to entry. This
+  // is the one moment the trade needs a decision and nothing used to say so.
+  if (kind === 'TP1') {
+    const p = a.position;
+    const lev = maxLev(w.market, w.symbol);
+    const banked = Math.round(p.tp1Portion * 100);
+    const title = `✅ TP1 hit — ${w.symbol} ${w.interval}`;
+    const runPct = Math.abs(p.tp2 - p.entryPrice) / p.entryPrice * 100;
+    const body =
+      `${p.side} from ${fmt(p.entryPrice)} · now ${fmt(a.price)}\n` +
+      `Bank ${banked}% here at ${fmt(a.price)}\n` +
+      `Move stop to entry ${fmt(p.entryPrice)} — the rest is risk-free\n` +
+      `TP2 ${fmt(p.tp2)}   +${runPct.toFixed(2)}%` +
+      (lev ? `  →  +${(runPct * lev).toFixed(1)}% @${lev}x` : '') + '\n' +
+      `Live ${p.livePnlPct >= 0 ? '+' : ''}${p.livePnlPct.toFixed(2)}% · ${p.liveR >= 0 ? '+' : ''}${p.liveR.toFixed(2)}R`;
+    return {
+      title, body,
+      telegram: `<b>✅ TP1 ${sym}${mk}</b>\n<pre>${body}</pre>`,
+      priority: 4, tags: ['white_check_mark', 'moneybag']
+    };
+  }
+
   if (kind === 'PREALERT') {
     const f = a.forecast;
     const mins = f.msToBarClose / 60000;

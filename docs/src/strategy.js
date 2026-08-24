@@ -19,7 +19,7 @@ export const DEFAULTS = {
   noStop: false,            // no protective stop: hold until the trail engages or the signal flips
   runner: true,             // no fixed TP2 — bank part at TP1, trail the rest
   minAdx: 20,               // skip entries unless trend strength clears this
-  minEmaSep: 0,             // ...and the EMAs have separated by this % of price
+  minEmaSep: 0.3,           // ...and the EMAs have separated by this % of price
   maxRecentSignals: 0,      // ...and there haven't been this many signals lately (chop guard)
   recentWindow: 30,
   rsiPeakExit: true,        // close into an RSI extreme that has started rolling over
@@ -34,7 +34,17 @@ export const DEFAULTS = {
   trailAtr: 2.5,            // trail distance, in ATR
   preAlertPct: 0.35,        // warn when price is this % from the trigger
   preAlertBars: 3,          // ...or when the cross is this many bars away
-  ...VP_DEFAULTS            // tpMode, vpLen, vpRows, vaPct, hvnThr, minTpAtr, fallbackRR
+  ...VP_DEFAULTS,           // tpMode, vpLen, vpRows, vaPct, hvnThr, minTpAtr, fallbackRR
+
+  // Tuned on 30m over 62 days of the 20 most volatile perps, ranked by the
+  // WORSE of two independent halves so a one-month fluke can't win. Fixed
+  // risk/reward targets beat the volume-profile ones there, and demanding real
+  // EMA separation cuts the trade count by ~8x while raising the average trade
+  // from -0.02R to +0.11R after fees. See docs/TUNING.md.
+  tpMode: 'rr',
+  rr1: 0.5,
+  rr2: 1.5,
+  runner: false
 };
 
 export function analyze(candles, userCfg = {}) {

@@ -68,6 +68,11 @@ for (const w of state.watches) {
     }
     if (!a.position) marks.entryTime = null;
 
+    if (a.position?.tp1Done && marks.tp1For !== a.position.entryTime) {
+      marks.tp1For = a.position.entryTime;
+      if (!firstSight) fired.push(['TP1', w, a]);
+    }
+
     if (lastTrade && marks.exitTime !== lastTrade.exitTime) {
       marks.exitTime = lastTrade.exitTime;
       if (!firstSight) fired.push(['EXIT', w, { ...a, justClosed: lastTrade }]);

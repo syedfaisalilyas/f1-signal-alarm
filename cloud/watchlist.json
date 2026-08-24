@@ -1,40 +1,22 @@
 {
   "watches": [
     {
-      "id": "futures:TUTUSDT:3m",
-      "enabled": true,
-      "cfg": {},
-      "addedAt": 1787504772866,
+      "id": "futures:TUTUSDT:30m",
       "market": "futures",
       "symbol": "TUTUSDT",
-      "interval": "3m"
-    },
-    {
-      "id": "futures:TUTUSDT:5m",
+      "interval": "30m",
       "enabled": true,
       "cfg": {},
-      "addedAt": 1787504779448,
-      "market": "futures",
-      "symbol": "TUTUSDT",
-      "interval": "5m"
+      "addedAt": 1787566645029
     },
     {
-      "id": "futures:TUTUSDT:1m",
-      "enabled": true,
-      "cfg": {},
-      "addedAt": 1787504955105,
-      "market": "futures",
-      "symbol": "TUTUSDT",
-      "interval": "1m"
-    },
-    {
-      "id": "futures:SPKUSDT:5m",
-      "enabled": true,
-      "cfg": {},
-      "addedAt": 1787517653622,
+      "id": "futures:SPKUSDT:30m",
       "market": "futures",
       "symbol": "SPKUSDT",
-      "interval": "5m"
+      "interval": "30m",
+      "enabled": true,
+      "cfg": {},
+      "addedAt": 1787566645029
     }
   ],
   "settings": {

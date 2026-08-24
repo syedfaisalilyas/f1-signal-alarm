@@ -256,6 +256,13 @@ export class Feed extends EventEmitter {
     }
     if (a.position) e.marks.entryTime = a.position.entryTime;
 
+    // TP1 — the position banked its first target since the last look. Fires
+    // once per trade: the mark is keyed to the entry, not the bar.
+    if (a.position?.tp1Done && e.marks.tp1For !== a.position.entryTime) {
+      e.marks.tp1For = a.position.entryTime;
+      this.emit('signal', 'TP1', e.watch, a);
+    }
+
     // EXIT — a trade closed on the newest closed bar
     const lastTrade = a.trades[a.trades.length - 1];
     if (lastTrade && lastTrade.exitBar === a.lastClosedBar && e.marks.exitTime !== lastTrade.exitTime) {
