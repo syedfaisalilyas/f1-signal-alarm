@@ -42,12 +42,19 @@ setOverrides(state.settings.levOverride || {});
 // MEXC serves no CORS headers, so the page can't read the contract list itself.
 // The scheduled scanner publishes it to the state branch instead.
 const LEVERAGE_URL = 'https://raw.githubusercontent.com/syedfaisalilyas/f1-signal-alarm/state/leverage.json';
-nativeFetchLeverage();
-async function nativeFetchLeverage() {
+loadLeverage();
+async function loadLeverage() {
+  // raw.githubusercontent negative-caches a 404 for ~5 minutes, which outlives
+  // the gap before the first scan publishes this. A changing query key sidesteps
+  // that cache; it moves hourly, and the data only shifts on new listings.
+  const bust = Math.floor(Date.now() / 3600000);
   try {
-    const r = await fetch(LEVERAGE_URL);
-    if (r.ok) console.log('[engine] leverage hydrated for', hydrateLeverage(await r.json()), 'contracts');
-  } catch { /* cards just show no max leverage */ }
+    const r = await fetch(`${LEVERAGE_URL}?v=${bust}`, { cache: 'no-store' });
+    if (!r.ok) return console.warn('[engine] no leverage data yet (HTTP ' + r.status + ') — cards show no max leverage');
+    console.log('[engine] leverage hydrated for', hydrateLeverage(await r.json()), 'contracts');
+  } catch (e) {
+    console.warn('[engine] leverage fetch failed:', e.message);
+  }
 }
 
 // ─── the app's websocket, fulfilled locally ───
