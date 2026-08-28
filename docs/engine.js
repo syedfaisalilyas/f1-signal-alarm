@@ -254,11 +254,14 @@ async function route(path, params, method, body) {
 
   if (path === '/api/screener') {
     const coins = Math.min(30, Math.max(5, Number(params.get('coins')) || 18));
-    const d = await screener.run({ market: params.get('market') === 'spot' ? 'spot' : 'futures', coins });
+    const from = Number(params.get('from')) || 0;
+    const to = Number(params.get('to')) || 0;
+    const d = await screener.run({ market: params.get('market') === 'spot' ? 'spot' : 'futures', coins, from, to });
     const watched = new Set(state.watches.map(w => w.id));
     const tag = r => ({ ...r, watched: watched.has(`${r.market}:${r.symbol}:${r.interval}`) });
     return json({
-      at: d.at, scanned: d.scanned, qualified: d.qualified, profitable: d.profitable,
+      at: d.at, from: d.from, to: d.to, reach: d.reach,
+      scanned: d.scanned, qualified: d.qualified, profitable: d.profitable,
       rows: d.rows.slice(0, 40).map(tag), bestPerCoin: d.bestPerCoin.slice(0, 20).map(tag)
     });
   }

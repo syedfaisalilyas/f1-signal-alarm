@@ -346,13 +346,43 @@ $('#bestCoins').onchange = loadBest;
 $('#bestMode').onchange = () => renderBest(lastBest);
 $('#bestSort').onchange = () => renderBest(lastBest);
 $('#bestRefresh').onclick = loadBest;
+// Period and explicit dates are two ways to say the same thing, so picking one
+// clears the other rather than leaving a contradictory pair on screen.
+$('#bestDays').onchange = () => { $('#bestFrom').value = ''; $('#bestTo').value = ''; loadBest(); };
+$('#bestFrom').onchange = () => { $('#bestDays').value = ''; loadBest(); };
+$('#bestTo').onchange = () => { $('#bestDays').value = ''; loadBest(); };
+$('#bestClear').onclick = () => {
+  $('#bestDays').value = '';
+  $('#bestFrom').value = '';
+  $('#bestTo').value = '';
+  loadBest();
+};
+
+// The window to score trades in: a rolling period, an explicit range, or
+// neither — in which case the whole backtest counts, as it always did.
+function bestWindow() {
+  const days = Number($('#bestDays').value) || 0;
+  if (days) {
+    return { from: Date.now() - days * 86400000, to: '',
+             label: days === 1 ? 'last 24 hours' : `last ${days} days` };
+  }
+  // Date inputs are local days; the API works in epoch ms, so send whole days.
+  const from = $('#bestFrom').value ? new Date($('#bestFrom').value + 'T00:00:00').getTime() : '';
+  const to = $('#bestTo').value ? new Date($('#bestTo').value + 'T23:59:59.999').getTime() : '';
+  const label = from || to ? `${$('#bestFrom').value || 'start'} → ${$('#bestTo').value || 'now'}` : '';
+  return { from, to, label };
+}
 
 let lastBest = null;
 async function loadBest() {
-  $('#bestMeta').textContent = 'backtesting… this takes a few seconds';
+  const w = bestWindow();
+  $('#bestMeta').textContent = w.label
+    ? `backtesting ${w.label}… a longer period means deeper candle fetches`
+    : 'backtesting… this takes a few seconds';
   $('#bestRows').innerHTML = '';
   try {
-    lastBest = await apiJson(`/api/screener?coins=${$('#bestCoins').value}`);
+    lastBest = await apiJson(`/api/screener?coins=${$('#bestCoins').value}`
+      + `&from=${w.from}&to=${w.to}`);
     if (lastBest.error) throw new Error(lastBest.error);
     renderBest(lastBest);
   } catch (e) {
@@ -376,12 +406,28 @@ function renderBest(d) {
     const seen = new Set();
     rows = rows.filter(r => (seen.has(r.symbol) ? false : seen.add(r.symbol)));
   }
+  const w = bestWindow();
+  const day = ts => new Date(ts).toLocaleDateString([], { month: 'short', day: 'numeric' });
   $('#bestMeta').innerHTML =
     `tested ${d.scanned} coin/timeframe combos · <b>${d.profitable}</b> profitable · ` +
+    (w.label ? `scored over <b>${w.label}</b> · ` : '') +
     `sorted by ${label}`;
+  // Deep history costs API calls, so the scan is capped — say when the window
+  // asked for more than the candles actually reach, rather than showing a
+  // short period as if it were the whole story.
+  if (w.from && d.reach?.shallowest > w.from + 3600000) {
+    $('#bestMeta').innerHTML +=
+      `<br><span class="warn">Some timeframes only reach back to ${day(d.reach.shallowest)} at this scan depth` +
+      (d.reach.deepest < d.reach.shallowest ? ` (the deepest goes to ${day(d.reach.deepest)})` : '') +
+      ` — 1m candles run out first.</span>`;
+  }
   const box = $('#bestRows');
   box.innerHTML = '';
-  if (!rows.length) { box.innerHTML = '<div class="hempty">Nothing profitable in this scan.</div>'; return; }
+  if (!rows.length) {
+    box.innerHTML = `<div class="hempty">${w.label
+      ? 'Nothing profitable in that period.' : 'Nothing profitable in this scan.'}</div>`;
+    return;
+  }
 
   for (const r of rows) {
     const n = el('div', 'brow' + (r.watched ? ' watched' : ''), `
@@ -392,7 +438,7 @@ function renderBest(d) {
         <span class="bpct up">+${r.totalPct.toFixed(1)}%</span>
       </div>
       <div class="b2">
-        <span>${r.trades} trades</span>
+        <span>${r.trades} trades${r.allTrades > r.trades ? ` of ${r.allTrades}` : ''}</span>
         <span class="${r.winRate >= 70 ? 'up' : ''}">${r.winRate.toFixed(0)}% win</span>
         <span>ADX ${r.adx?.toFixed(0) ?? '—'}</span>
         <span>stop ${r.stopPct?.toFixed(1) ?? '—'}%</span>

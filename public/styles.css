@@ -307,3 +307,5 @@ main{max-width:1400px;margin:0 auto;padding:0 16px}
 }
 .histctl input[type="date"]:invalid { color:var(--faint) }
 .histmeta .warn { color:var(--warn); font-size:12px }
+/* Filters split over two rows should still read as one block of controls. */
+.histctl + .histctl { margin-top:-4px }

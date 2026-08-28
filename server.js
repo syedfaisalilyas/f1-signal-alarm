@@ -286,11 +286,14 @@ app.get('/api/history/:id', async (req, res) => {
 app.get('/api/screener', async (req, res) => {
   try {
     const coins = Math.min(30, Math.max(5, Number(req.query.coins) || 18));
-    const d = await screener.run({ market: req.query.market === 'spot' ? 'spot' : 'futures', coins });
+    const from = Number(req.query.from) || 0;
+    const to = Number(req.query.to) || 0;
+    const d = await screener.run({ market: req.query.market === 'spot' ? 'spot' : 'futures', coins, from, to });
     const watched = new Set(feed.snapshot().map(w => `${w.market}:${w.symbol}:${w.interval}`));
     const tag = r => ({ ...r, watched: watched.has(`${r.market}:${r.symbol}:${r.interval}`) });
     res.json({
-      at: d.at, scanned: d.scanned, qualified: d.qualified, profitable: d.profitable,
+      at: d.at, from: d.from, to: d.to, reach: d.reach,
+      scanned: d.scanned, qualified: d.qualified, profitable: d.profitable,
       rows: d.rows.slice(0, 40).map(tag), bestPerCoin: d.bestPerCoin.slice(0, 20).map(tag)
     });
   } catch (e) { res.status(500).json({ error: e.message }); }

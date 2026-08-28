@@ -22,9 +22,13 @@ export function aggregate(list) {
     winRate: n ? wins / n * 100 : 0,
     greenRate: n ? green / n * 100 : 0,
     totalR, avgR: n ? totalR / n : 0,
-    totalPct: list.reduce((s, t) => s + t.pnlPct, 0)
+    totalPct: list.reduce((s, t) => s + t.pnlPct, 0),
+    avgWinPct: avg(list.filter(t => t.r > 0)),
+    avgLossPct: avg(list.filter(t => t.r <= 0))
   };
 }
+
+const avg = list => (list.length ? list.reduce((s, t) => s + t.pnlPct, 0) / list.length : 0);
 
 // How far back the scanned candles actually reach. Without this, asking for a
 // range older than the fetched window looks like "no trades" rather than
