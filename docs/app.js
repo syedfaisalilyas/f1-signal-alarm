@@ -556,6 +556,8 @@ function renderCoil(d) {
     fbox.appendChild(n);
   }
 
+  renderCoilPast(d);
+
   const rbox = $('#coilReady');
   rbox.innerHTML = '';
   if (!d.coiling.length) {
@@ -584,6 +586,44 @@ function renderCoil(d) {
       </div>`);
     n.onclick = () => watchFromCoil(r, d.interval);
     rbox.appendChild(n);
+  }
+}
+
+// The track record: what this same setup already caught on these same coins,
+// scored by the trailing exit rather than the fixed target it used to use.
+// The candles came back with the scan, so this costs nothing extra to show.
+function renderCoilPast(d) {
+  const box = $('#coilPast');
+  box.innerHTML = '';
+  const past = (d.history || []).filter(h => h.atMaxLev > 0);
+  if (!past.length) {
+    box.innerHTML = '<div class="hempty">No completed ignitions in this window yet.</div>';
+    return;
+  }
+  const when = t => new Date(t).toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+  for (const h of past) {
+    const up = h.side === 'LONG';
+    const n = el('div', 'brow coilrow past' + (up ? ' long' : ' short'), `
+      <div class="b1">
+        <span class="bsym">${h.symbol}</span>
+        <span class="iv">${h.interval}</span>
+        <span class="side ${up ? 'up' : 'down'}">${up ? '🚀' : '🔻'} ${h.side}</span>
+        ${h.open ? '<span class="age hot">still running</span>' : '<span class="age">trailed out</span>'}
+        <span class="pnl">+${Math.round(h.atMaxLev).toLocaleString()}%</span>
+      </div>
+      <div class="b2">
+        <span>moved <b>+${h.peakPct.toFixed(1)}%</b></span>
+        <span>trail kept <b>+${h.pnlPct.toFixed(1)}%</b></span>
+        <span>at ${h.maxLev}x MEXC max</span>
+        <span>dipped ${h.dipPct.toFixed(2)}% first</span>
+      </div>
+      <div class="plan">
+        <span>in <b>${when(h.entryTime)}</b> @ ${px(h.entry)}</span>
+        <span>out <b>${when(h.exitTime)}</b> @ ${px(h.exit)}</span>
+        <span class="rr">out of a ${h.coilPct?.toFixed(1) ?? '—'}% coil</span>
+      </div>`);
+    n.onclick = () => watchFromCoil({ market: h.market, symbol: h.symbol }, h.interval);
+    box.appendChild(n);
   }
 }
 

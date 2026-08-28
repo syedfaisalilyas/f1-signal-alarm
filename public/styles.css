@@ -348,3 +348,12 @@ main{max-width:1400px;margin:0 auto;padding:0 16px}
 /* The number sits above the donut hole that punches out the ring. */
 .dial i{position:relative;z-index:1;font-style:normal}
 .coilrow.coiled .b1{gap:10px}
+
+/* Track record rows: the payoff is the headline, so it sits where the
+   percentage sits everywhere else in this app. */
+.coilrow.past{opacity:.94}
+.coilrow.past .pnl{margin-left:auto;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;
+  font-weight:700;font-size:15px;color:var(--warn)}
+.coilrow.past .age{margin-left:0}
+.coilrow.past .plan{font-size:10.5px}
+.coilrow.past .plan b{font-weight:600}

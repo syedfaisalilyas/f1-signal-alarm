@@ -318,7 +318,8 @@ app.get('/api/ignition', async (req, res) => {
       scanned: d.scanned, analysed: d.analysed,
       igniting: d.igniting.filter(r => r.fired.barsAgo <= fresh).map(tag),
       stale: d.igniting.filter(r => r.fired.barsAgo > fresh).slice(0, 12).map(tag),
-      coiling: d.coiling.slice(0, 20).map(tag)
+      coiling: d.coiling.slice(0, 20).map(tag),
+      history: d.history.slice(0, 25)
     });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });

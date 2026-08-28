@@ -282,7 +282,8 @@ async function route(path, params, method, body) {
       scanned: d.scanned, analysed: d.analysed,
       igniting: d.igniting.filter(r => r.fired.barsAgo <= fresh).map(tag),
       stale: d.igniting.filter(r => r.fired.barsAgo > fresh).slice(0, 12).map(tag),
-      coiling: d.coiling.slice(0, 20).map(tag)
+      coiling: d.coiling.slice(0, 20).map(tag),
+      history: d.history.slice(0, 25)
     });
   }
 

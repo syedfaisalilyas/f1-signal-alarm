@@ -16,6 +16,7 @@
 
 import { atr as atrSeries, sma } from './indicators.js';
 import { SPOT_MIRROR, isGeoBlocked, mexcAllTickers } from './geofeed.js';
+import { maxLev } from './leverage.js';
 
 export const DEFAULTS = {
   coilBars:   24,     // the coil window — 2h on 5m
@@ -268,6 +269,46 @@ export function ignitionEvents(candles, cfg = {}) {
   return events;
 }
 
+// What a past ignition actually paid, under the exit the backtest chose: no
+// fixed target, a stop that follows the best price and closes `give` below it.
+// Across 2,510 backtested ignitions this returned +42.0% per trade at MEXC's
+// leverage against the fixed target's +7.4%, and captured 79% of the peak.
+//
+// The stop is tested before the trail is raised on every bar, so a candle that
+// takes out the stop and then runs counts as a loss — the same order the
+// backtest uses, because a hopeful ordering here would quietly inflate the
+// track record the app shows.
+export function simulateTrail(bars, ev, cfg = {}) {
+  const give = cfg.trailGive ?? DEFAULTS.trailGive;
+  const i = ev.bar;
+  const entry = bars[i + 1];
+  if (!entry) return null;
+  const long = ev.side === 'LONG';
+  const fill = entry.o;
+  const fav = p => (long ? p - fill : fill - p) / fill * 100;
+  const adv = p => (long ? fill - p : p - fill) / fill * 100;
+
+  let stop = ev.stop, peak = fill, mae = 0, mfe = 0;
+  for (let k = i + 1; k < bars.length; k++) {
+    const b = bars[k];
+    const a = adv(long ? b.l : b.h);
+    if (a > mae) mae = a;
+    const g = fav(long ? b.h : b.l);
+    if (g > mfe) mfe = g;
+
+    if (long ? b.l <= stop : b.h >= stop) {
+      return { entryTime: entry.t, entry: fill, exitTime: b.t, exit: stop, open: false,
+               pnlPct: fav(stop), peakPct: mfe, dipPct: mae, bars: k - i };
+    }
+    peak = long ? Math.max(peak, b.h) : Math.min(peak, b.l);
+    const t = long ? peak * (1 - give) : peak * (1 + give);
+    stop = long ? Math.max(stop, t) : Math.min(stop, t);
+  }
+  const last = bars[bars.length - 1];
+  return { entryTime: entry.t, entry: fill, exitTime: last.t, exit: last.c, open: true,
+           pnlPct: fav(last.c), peakPct: mfe, dipPct: mae, bars: bars.length - 1 - i };
+}
+
 // ─────────────────────────── market-wide scan ───────────────────────────
 
 const BASE = { spot: 'https://api.binance.com/api/v3', futures: 'https://fapi.binance.com/fapi/v1' };
@@ -320,7 +361,7 @@ export async function scanUniverse({
   market = 'futures',
   interval = '5m',
   minQuoteVol = 3e6,
-  bars = 220,
+  bars = 500,          // one request either way; 500 buys ~20 days of 1h history
   concurrency = 8,
   cfg = {},
   fetchCandles                      // injected so this module stays testable
@@ -331,7 +372,25 @@ export async function scanUniverse({
   const results = await mapLimit(list, concurrency, async (row) => {
     const candles = await fetchCandles(market, row.symbol, interval, bars);
     const state = ignition(candles, cfg);
-    return state ? { ...row, market, interval, ...state } : null;
+    if (!state) return null;
+    // The candles are already here, so the track record of what this setup
+    // caught in the same window is free — no extra request per coin.
+    const lev = maxLev(market, row.symbol) || 1;
+    const past = ignitionEvents(candles, cfg).map(ev => {
+      const o = simulateTrail(candles, ev, cfg);
+      if (!o) return null;
+      // Liquidation lands near 100/leverage against you; a trade that got
+      // there never collected the rest, whatever the chart did afterwards.
+      const dead = o.dipPct >= 100 / lev;
+      return {
+        symbol: row.symbol, market, interval, side: ev.side, maxLev: lev,
+        coilPct: ev.boxWidthPct, volX: ev.volX, ...o,
+        atMaxLev: dead ? -100 : o.pnlPct * lev,
+        peakAtMaxLev: dead ? -100 : o.peakPct * lev,
+        liquidated: dead
+      };
+    }).filter(Boolean);
+    return { ...row, market, interval, ...state, past };
   });
 
   const ok = results.filter(Boolean);
@@ -341,7 +400,8 @@ export async function scanUniverse({
     scanned: list.length,
     analysed: ok.length,
     igniting: ok.filter(r => r.fired).sort((a, b) => b.fired.volX - a.fired.volX),
-    coiling: ok.filter(r => !r.fired && r.coil.squeezed).sort((a, b) => b.readiness - a.readiness)
+    coiling: ok.filter(r => !r.fired && r.coil.squeezed).sort((a, b) => b.readiness - a.readiness),
+    history: ok.flatMap(r => r.past).sort((a, b) => b.atMaxLev - a.atMaxLev)
   };
 }
 
