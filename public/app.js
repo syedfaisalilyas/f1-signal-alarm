@@ -560,9 +560,9 @@ function renderCoil(d) {
   }
   for (const r of d.coiling) {
     const c = r.coil;
-    const n = el('div', 'brow coilrow ready' + (r.watched ? ' watched' : ''), `
+    const n = el('div', 'brow coilrow coiled' + (r.watched ? ' watched' : ''), `
       <div class="b1">
-        <span class="ready" style="--v:${r.readiness}%"><i>${r.readiness}</i></span>
+        <span class="dial" style="--v:${r.readiness}%"><i>${r.readiness}</i></span>
         <span class="bsym">${r.symbol}</span>
         <span class="iv">${d.interval}</span>
         ${r.watched ? '<span class="tag">watching</span>' : ''}
