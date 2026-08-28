@@ -537,7 +537,7 @@ function renderCoil(d) {
         <span class="iv">${d.interval}</span>
         <span class="side ${up ? 'up' : 'down'}">${up ? '🚀 LONG' : '🔻 SHORT'}</span>
         ${r.watched ? '<span class="tag">watching</span>' : ''}
-        ${f.grade === 'A' ? '' : '<span class="grade">weaker side</span>'}
+        <span class="grade g${f.grade || 'B'}">${f.grade === 'A' ? 'A · take it' : 'B'}</span>
         <span class="age ${f.barsAgo <= 1 ? 'hot' : ''}">${age}</span>
       </div>
       <div class="b2">
@@ -557,7 +557,10 @@ function renderCoil(d) {
         <span>ref TP2 ${px(f.tp2)}</span>
         <em>don't sell there — that is what caps these at +285% instead of +12,000%</em>
       </div>
-      <div class="b3"><span>$${(r.quoteVol / 1e6).toFixed(1)}M 24h · ${r.changePct.toFixed(1)}% today</span></div>`);
+      <div class="b3">
+        <span>$${(r.quoteVol / 1e6).toFixed(1)}M 24h · ${r.changePct.toFixed(1)}% today</span>
+        <span class="why ${f.grade === 'A' ? 'ok' : ''}">${f.gradeWhy || ''}</span>
+      </div>`);
     n.onclick = () => watchFromCoil(r, d.interval);
     fbox.appendChild(n);
   }

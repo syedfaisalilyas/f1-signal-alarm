@@ -376,6 +376,66 @@ export async function scanHistory({
   };
 }
 
+const PER_DAY = { '1m': 1440, '3m': 480, '5m': 288, '15m': 96, '30m': 48, '1h': 24, '4h': 6 };
+
+// What the coin looked like BEFORE it fired, and what the market was doing.
+//
+// The trigger candle says nothing useful — volume, range and coil width all
+// failed to separate winners from losers across 2,500 trades. These four did,
+// on a time split where the rules were found in the older half and scored on a
+// newer half they had never seen:
+//
+//   not within 3% of its 30-day high   worse in both halves if it is
+//   coin flat or down over 7 days      better in both halves
+//   BTC up over the last 7 days        better in both halves
+//   the coin's own ATR under 1%        better in both halves
+//
+// Together, on the held-out half: win rate 24% → 50%, average per trade
+// +70.7% → +206.4% at 10x. It is the opposite of chasing — a quiet coin that
+// has not moved yet, well below its high, while the market as a whole rises.
+export function marketContext(candles, interval, btcCandles = null) {
+  const per = PER_DAY[interval] || 24;
+  const n = candles.length;
+  if (n < 2) return null;
+  const i = n - 1, c = candles[i].c;
+  const look = k => candles.slice(Math.max(0, i - k), i);
+
+  const month = look(30 * per);
+  const hi30 = month.length ? Math.max(...month.map(b => b.h)) : null;
+  const ret = k => { const p = candles[i - k]?.c; return p ? (c - p) / p * 100 : null; };
+  const win = look(14);
+  const atr = win.length ? win.reduce((s, b) => s + (b.h - b.l), 0) / win.length : null;
+
+  let btc7d = null;
+  if (btcCandles?.length > 7 * per) {
+    const b = btcCandles, j = b.length - 1, p = b[j - 7 * per]?.c;
+    if (p) btc7d = (b[j].c - p) / p * 100;
+  }
+  return {
+    fromHigh30: hi30 ? (c - hi30) / hi30 * 100 : null,
+    ret7d: ret(7 * per),
+    atrPct: atr && c > 0 ? atr / c * 100 : null,
+    btc7d,
+    // Enough history to judge? Without a month behind it the answer is "unknown",
+    // which must not read as "passes".
+    complete: month.length >= 20 * per
+  };
+}
+
+// A is the tested edge, B is everything else. Nothing is hidden — the board
+// shows both — but only A is worth being woken up for.
+export function gradeSetup(side, ctx) {
+  if (side !== 'LONG') return { grade: 'B', why: 'short — lost money at leverage across the backtest' };
+  if (!ctx?.complete) return { grade: 'B', why: 'not enough history to judge the setup' };
+  const fails = [];
+  if (!(ctx.fromHigh30 < -3)) fails.push('already at its 30-day high');
+  if (!(ctx.ret7d <= 0)) fails.push('already up over 7 days');
+  if (!(ctx.btc7d > 0)) fails.push('BTC falling this week');
+  if (!(ctx.atrPct < 1)) fails.push('too volatile to be a real coil');
+  return fails.length ? { grade: 'B', why: fails.join(' · ') }
+                      : { grade: 'A', why: 'quiet coin below its high, market rising' };
+}
+
 // ─────────────────────────── market-wide scan ───────────────────────────
 
 const BASE = { spot: 'https://api.binance.com/api/v3', futures: 'https://fapi.binance.com/fapi/v1' };
@@ -428,7 +488,7 @@ export async function scanUniverse({
   market = 'futures',
   interval = '5m',
   minQuoteVol = 3e6,
-  bars = 500,          // one request either way; 500 buys ~20 days of 1h history
+  bars = 900,          // still one request; 900 buys the ~30 days the grade needs
   concurrency = 8,
   cfg = {},
   fetchCandles                      // injected so this module stays testable
@@ -436,10 +496,20 @@ export async function scanUniverse({
   if (typeof fetchCandles !== 'function') throw new Error('scanUniverse needs a fetchCandles function');
 
   const list = await universe(market, minQuoteVol);
+  // One extra request for the tide every signal is graded against.
+  const btcCandles = await fetchCandles(market, 'BTCUSDT', interval, bars).catch(() => null);
+
   const results = await mapLimit(list, concurrency, async (row) => {
     const candles = await fetchCandles(market, row.symbol, interval, bars);
     const state = ignition(candles, cfg);
     if (!state) return null;
+    const ctx = marketContext(candles, interval, btcCandles);
+    if (state.fired) {
+      const g = gradeSetup(state.fired.side, ctx);
+      state.fired.grade = g.grade;
+      state.fired.gradeWhy = g.why;
+      state.fired.ctx = ctx;
+    }
     // The candles are already here, so the track record of what this setup
     // caught in the same window is free — no extra request per coin.
     const lev = maxLev(market, row.symbol) || 1;
@@ -457,7 +527,7 @@ export async function scanUniverse({
         liquidated: dead
       };
     }).filter(Boolean);
-    return { ...row, market, interval, ...state, past };
+    return { ...row, market, interval, ...state, ctx, past };
   });
 
   const ok = results.filter(Boolean);

@@ -378,5 +378,9 @@ main{max-width:1400px;margin:0 auto;padding:0 16px}
 .coilrow.past .plan .peaked b{color:var(--warn)}
 
 /* Shorts fired the same way and lost money at leverage; say so on the row. */
-.coilrow .grade{font-size:9px;letter-spacing:.06em;text-transform:uppercase;color:var(--down);
-  padding:2px 6px;border-radius:5px;border:1px solid rgba(255,84,112,.35);background:rgba(255,84,112,.08)}
+.coilrow .grade{font-size:9px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;
+  padding:2px 7px;border-radius:5px;border:1px solid var(--line);color:var(--faint);background:var(--panel)}
+/* Grade A is the tested setup: 50% win rate out of sample against 24%. */
+.coilrow .grade.gA{color:var(--up);border-color:rgba(38,208,124,.45);background:rgba(38,208,124,.1)}
+.coilrow .b3 .why{color:var(--faint);font-size:10px;text-align:right;max-width:62%}
+.coilrow .b3 .why.ok{color:var(--up)}

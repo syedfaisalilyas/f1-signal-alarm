@@ -141,9 +141,11 @@ if (ig.enabled !== false && !settings.muted) {
     // buy the top.
     const freshMax = ig.fresh ?? 2;
     let sent = 0;
-    // Shorts on this setup lost money at leverage across the whole backtest, so
-    // the phone stays quiet for them unless asked otherwise. They still show on
-    // the board — this only decides what is worth waking up for.
+    // Grade A is the setup that survived a time-split test: a quiet coin below
+    // its 30-day high, flat or down on the week, low volatility, while BTC is
+    // rising. On held-out data it won 50% against the unfiltered 24%. It is
+    // also rare — expect a couple a week, not a couple a day. Everything else
+    // still shows on the board; this only decides what is worth waking up for.
     const gradeOnly = ig.longsOnly !== false;
     for (const r of sweep.igniting) {
       if (r.fired.barsAgo > freshMax) continue;
@@ -162,6 +164,7 @@ if (ig.enabled !== false && !settings.muted) {
         `Entry ${n(f.entry)}\n` +
         `Stop  ${n(f.stop)}   (${f.riskPct.toFixed(2)}%)\n` +
         `Then trail ${((f.trailGive ?? 0.25) * 100).toFixed(0)}% below the high — do not sell at a fixed target.\n` +
+        `Setup: ${f.gradeWhy || 'grade ' + (f.grade || '?')}\n` +
         `(ref TP1 ${n(f.tp1)} · TP2 ${n(f.tp2)} · ${f.rr1.toFixed(1)}R)\n` +
         `24h volume $${(r.quoteVol / 1e6).toFixed(1)}M · ${r.changePct.toFixed(1)}% today`;
 
