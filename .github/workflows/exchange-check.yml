@@ -1,0 +1,33 @@
+# Can the cloud runner actually TRADE, or only read prices?
+#
+# Market data falls back to MEXC when Binance answers 451, which hides the
+# problem — a trading bot has no fallback. This pokes both exchanges' private
+# endpoints without credentials: a 401/700002-style error means the host is
+# reachable and would accept a signed request, while 403 or 451 means the
+# runner is blocked and no API key would help.
+name: exchange-check
+
+on:
+  workflow_dispatch:
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Where is this runner
+        run: curl -s https://ipinfo.io/json | head -c 300; echo
+
+      - name: Binance futures
+        run: |
+          echo "ping        $(curl -s -o /dev/null -w '%{http_code}' -m 15 https://fapi.binance.com/fapi/v1/ping)"
+          echo "account     $(curl -s -o /dev/null -w '%{http_code}' -m 15 https://fapi.binance.com/fapi/v2/account)"
+          echo "body:       $(curl -s -m 15 https://fapi.binance.com/fapi/v2/account | head -c 160)"
+
+      - name: MEXC futures
+        run: |
+          echo "ping        $(curl -s -o /dev/null -w '%{http_code}' -m 15 https://contract.mexc.com/api/v1/contract/ping)"
+          echo "assets      $(curl -s -o /dev/null -w '%{http_code}' -m 15 https://contract.mexc.com/api/v1/private/account/assets)"
+          echo "body:       $(curl -s -m 15 https://contract.mexc.com/api/v1/private/account/assets | head -c 160)"
+          echo "order EP    $(curl -s -o /dev/null -w '%{http_code}' -m 15 -X POST https://contract.mexc.com/api/v1/private/order/submit)"
+          echo "body:       $(curl -s -m 15 -X POST https://contract.mexc.com/api/v1/private/order/submit | head -c 160)"
