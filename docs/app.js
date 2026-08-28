@@ -550,7 +550,9 @@ function renderCoil(d) {
         <span>entry <b>${px(f.entry)}</b></span>
         <span>stop <b class="down">${px(f.stop)}</b> <em>${f.riskPct.toFixed(2)}%</em></span>
         <span class="trail">then trail <b>${((f.trailGive ?? 0.25) * 100).toFixed(0)}%</b> below the high</span>
-        ${f.useLev ? `<span class="size">at <b>${f.useLev}x</b><em>stop costs ${(f.riskPct * f.useLev).toFixed(0)}% of margin</em></span>` : ''}
+        ${f.useLev ? `<span class="size">at <b>${f.useLev}x</b><em>${
+          f.riskPct * f.useLev >= 100 ? 'liquidates before the stop — margin ≈1% of wallet'
+          : `stop costs ${(f.riskPct * f.useLev).toFixed(0)}% of margin`}</em></span>` : ''}
         <span class="rr">${f.rr1.toFixed(1)}R</span>
       </div>
       <div class="plan refs">

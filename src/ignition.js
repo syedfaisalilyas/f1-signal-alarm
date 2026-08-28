@@ -36,7 +36,7 @@ export const DEFAULTS = {
   fireWindow: 2,      // a break is "fresh" for this many bars
   trailGive:  0.25,   // once running, exit this far back from the best price
   maxCoilPct: 5.00,   // a 'coil' wider than this is just a trading range
-  useLev:     25      // what to actually trade at — see the note on sizing
+  useLev:     0       // 0 = the exchange maximum; see the note on sizing
 };
 
 const TF_MS = { '1m': 60000, '3m': 180000, '5m': 300000, '15m': 900000, '30m': 1800000, '1h': 3600000, '4h': 14400000 };
@@ -327,19 +327,26 @@ export function simulateTrail(bars, ev, cfg = {}) {
 
 // What to actually trade this at.
 //
-// Over three months of longs, at $1 a trade on a $100 wallet:
+// An earlier version of this note argued for 25x on the strength of a 110%
+// drawdown at maximum leverage. That test was wrong: it staked a fixed $1 while
+// the account shrank, so the stake grew as a share of the wallet until it broke
+// the account. Staking a fixed percentage instead — which can never reach zero —
+// max leverage wins at every size tested over the same 353 trades:
 //
-//   max leverage   +746%   but a 110% drawdown — the account hit zero first,
-//                          so that return is imaginary
-//   25x            +565%   32% drawdown
-//   10x            +224%   16% drawdown
-//   grade A at 25x +372%   2% drawdown
+//   stake     25x final    max final    max drawdown
+//   0.5%          $806        $2,070            43%
+//   1%          $3,528       $17,137            68%
+//   2%         $34,112      $269,554            91%
 //
-// Max leverage is not the best row, it is the row that went bust before the
-// winners arrived. 25x is the most the account survived, so that is what the
-// app quotes, capped by whatever the symbol actually offers.
-export const tradeLev = (market, symbol, cfg = {}) =>
-  Math.max(1, Math.min(cfg.useLev ?? DEFAULTS.useLev, maxLev(market, symbol) || 1));
+// Leverage decides how often you are liquidated (196 of 353 trades at max, 36
+// at 25x, and no stake size changes that). Stake size decides whether those
+// liquidations matter. They are separate dials and this one is set to max on
+// the user's instruction, with the survivable figure still shown beside it.
+export const tradeLev = (market, symbol, cfg = {}) => {
+  const cap = maxLev(market, symbol) || 1;
+  const want = cfg.useLev ?? DEFAULTS.useLev;
+  return Math.max(1, want > 0 ? Math.min(want, cap) : cap);
+};
 
 // A deeper look back than the live sweep holds.
 //
