@@ -597,28 +597,45 @@ function renderCoil(d) {
 // for a year never slows down "what is igniting now".
 let pastRows = [], pastFrom = 'the scan window', pastDays = 0;
 
-// Sort and coin search are free — they reorder what is already loaded, so they
-// apply the instant you touch them. Look-back is not free: a longer range is a
-// fresh deep read that takes the better part of a minute, and on a phone the
-// picker fires a change for every option you scroll past. So that one waits for
-// the button, which says what it is about to fetch.
-$('#pastSort').onchange = drawPast;
-$('#pastQ').oninput = drawPast;
+// One button applies all three. Sort and search could redraw on every keystroke
+// and originally did, but a filter row where two controls act instantly and the
+// third waits is a row you cannot trust — you change something, nothing moves,
+// and you cannot tell whether it ignored you or is still working. So nothing
+// applies until Apply, and the button says when there is something to apply.
+$('#pastSort').onchange = markPastPending;
+$('#pastQ').oninput = markPastPending;
 $('#pastRange').onchange = markPastPending;
-$('#pastLoad').onclick = loadPast;
+$('#pastApply').onclick = applyPast;
+$('#pastQ').onkeydown = e => { if (e.key === 'Enter') { e.preventDefault(); applyPast(); } };
 
 const RANGE_LABEL = { 0: 'the scan window', 30: 'last 30 days', 90: 'last 3 months',
                       180: 'last 6 months', 365: 'last year' };
+// What is actually on screen, as opposed to what the controls are set to.
+let applied = { days: 0, sort: 'pnl', q: '' };
+
+const controls = () => ({
+  days: Number($('#pastRange').value) || 0,
+  sort: $('#pastSort').value,
+  q: $('#pastQ').value.trim().toUpperCase()
+});
 
 function markPastPending() {
-  const days = Number($('#pastRange').value) || 0;
-  const btn = $('#pastLoad');
-  // Compare what is picked against what is loaded, by range — the meta line's
-  // wording never matches a label, so comparing text left it lit forever.
-  const loaded = days === pastDays;
-  btn.textContent = loaded ? 'Loaded' : days ? `Load ${RANGE_LABEL[days]}` : 'Show scan window';
-  btn.classList.toggle('pending', !loaded);
-  btn.disabled = loaded;
+  const c = controls(), btn = $('#pastApply');
+  const dirty = c.days !== applied.days || c.sort !== applied.sort || c.q !== applied.q;
+  btn.classList.toggle('pending', dirty);
+  btn.disabled = !dirty;
+  btn.textContent = !dirty ? 'Filters applied'
+    : c.days !== applied.days ? `Apply — read ${RANGE_LABEL[c.days]}`
+    : 'Apply filters';
+}
+
+async function applyPast() {
+  const c = controls();
+  // Only a changed range costs a fetch; the rest is a redraw.
+  if (c.days !== applied.days) { await loadPast(); }
+  applied = c;
+  drawPast();
+  markPastPending();
 }
 
 function renderCoilPast(d) {
@@ -634,10 +651,10 @@ async function loadPast() {
   if (!days) {
     pastRows = lastCoil?.history || [];
     pastFrom = 'the scan window'; pastDays = 0;
-    drawPast(); markPastPending(); return;
+    drawPast(); return;
   }
 
-  const btn = $('#pastLoad');
+  const btn = $('#pastApply');
   btn.disabled = true;
   btn.textContent = 'Reading…';
   let secs = 0;
@@ -653,13 +670,11 @@ async function loadPast() {
     pastRows = d.rows;
     pastFrom = `${d.days} days · top ${d.coins} coins by volume`;
     pastDays = d.days;
-    drawPast();
   } catch (e) {
     $('#pastMeta').innerHTML = `<span class="warn">could not read history after ${secs}s — ${e.message}</span>`;
   } finally {
     clearInterval(tick);
     btn.disabled = false;
-    markPastPending();   // re-disables if the picked range is now the loaded one
   }
 }
 
@@ -674,11 +689,11 @@ const PAST_SORT = {
 function drawPast() {
   const box = $('#coilPast');
   box.innerHTML = '';
-  const q = $('#pastQ').value.trim().toUpperCase();
+  const q = applied.q;
   const past = pastRows
     .filter(h => h.atMaxLev > 0)
     .filter(h => !q || h.symbol.includes(q))
-    .sort(PAST_SORT[$('#pastSort').value] || PAST_SORT.pnl);
+    .sort(PAST_SORT[applied.sort] || PAST_SORT.pnl);
 
   $('#pastMeta').innerHTML = pastRows.length
     ? `<b>${past.length}</b> profitable ignition${past.length === 1 ? '' : 's'} from ${pastFrom}` +
