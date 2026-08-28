@@ -477,9 +477,15 @@ $('#coilRefresh').onclick = loadCoil;
 
 let lastCoil = null;
 async function loadCoil() {
-  $('#coilMeta').textContent = 'sweeping every liquid perp… one pass is a few hundred requests';
   $('#coilFired').innerHTML = '';
   $('#coilReady').innerHTML = '';
+  // One pass is a few hundred requests and on a phone that is not quick. A
+  // static label looks identical to a dead button, so count the seconds.
+  let secs = 0;
+  const label = () => $('#coilMeta').textContent =
+    `sweeping every liquid perp… ${secs}s (a few hundred requests)`;
+  label();
+  const tick = setInterval(() => { secs++; label(); }, 1000);
   try {
     // Ask for the widest freshness the picker offers and narrow it here, so
     // changing "fresh within" re-filters instantly instead of re-sweeping.
@@ -488,7 +494,9 @@ async function loadCoil() {
     if (lastCoil.error) throw new Error(lastCoil.error);
     renderCoil(lastCoil);
   } catch (e) {
-    $('#coilMeta').textContent = 'sweep failed: ' + e.message;
+    $('#coilMeta').innerHTML = `<span class="warn">sweep failed after ${secs}s — ${e.message}</span>`;
+  } finally {
+    clearInterval(tick);
   }
 }
 
