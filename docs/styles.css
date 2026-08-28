@@ -331,6 +331,11 @@ main{max-width:1400px;margin:0 auto;padding:0 16px}
 .plan b{font-weight:650;color:var(--fg)}
 .plan em{font-style:normal;color:var(--faint);font-size:10px}
 .plan .rr{margin-left:auto;color:var(--info);font-weight:650}
+/* The trail is the instruction; the fixed targets are only landmarks. */
+.plan .trail{color:var(--warn)}
+.plan .trail b{color:var(--warn)}
+.plan.refs{border-top:0;padding-top:4px;margin-top:2px;font-size:10px;color:var(--faint)}
+.plan.refs em{margin-left:auto;text-align:right;max-width:60%}
 .plan.trig em{margin-left:auto;text-align:right}
 
 /* Readiness as a dial, so the ripe ones read at a glance. Named .dial, not

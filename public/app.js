@@ -543,9 +543,13 @@ function renderCoil(d) {
       <div class="plan">
         <span>entry <b>${px(f.entry)}</b></span>
         <span>stop <b class="down">${px(f.stop)}</b> <em>${f.riskPct.toFixed(2)}%</em></span>
-        <span>TP1 <b class="up">${px(f.tp1)}</b></span>
-        <span>TP2 <b class="up">${px(f.tp2)}</b></span>
+        <span class="trail">then trail <b>${((f.trailGive ?? 0.25) * 100).toFixed(0)}%</b> below the high</span>
         <span class="rr">${f.rr1.toFixed(1)}R</span>
+      </div>
+      <div class="plan refs">
+        <span>ref TP1 ${px(f.tp1)}</span>
+        <span>ref TP2 ${px(f.tp2)}</span>
+        <em>don't sell there — that is what caps these at +285% instead of +12,000%</em>
       </div>
       <div class="b3"><span>$${(r.quoteVol / 1e6).toFixed(1)}M 24h · ${r.changePct.toFixed(1)}% today</span></div>`);
     n.onclick = () => watchFromCoil(r, d.interval);

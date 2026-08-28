@@ -103,6 +103,7 @@ function outcome(bars, ev, horizon) {
 // ticker/24hr is the heaviest call Binance offers and the first one it bans
 // you from. Cache the board so a re-run after a ban costs nothing.
 const CACHE = new URL('../data/universe-cache.json', import.meta.url).pathname;
+const WINDOWS = [];
 let UNIVERSE = null;
 async function board() {
   if (UNIVERSE) return UNIVERSE;
@@ -133,6 +134,20 @@ async function run(interval) {
     const evs = ignitionEvents(candles);
     const trades = evs.map(e => outcome(candles, e, horizon)).filter(Boolean)
       .map(t => ({ ...t, symbol: row.symbol }));
+    // Keep the forward window of each trade so exit rules can be compared
+    // offline. Re-fetching for every idea is what gets the IP banned.
+    if (has('dump')) {
+      for (const e of evs) {
+        const i = e.bar;
+        if (!candles[i + 1]) continue;
+        WINDOWS.push({
+          symbol: row.symbol, interval, side: e.side,
+          entryTime: candles[i + 1].t, fill: candles[i + 1].o,
+          stop: e.stop, tp1: e.tp1, tp2: e.tp2,
+          bars: candles.slice(i + 1, i + 1 + horizon).map(b => [b.t, b.h, b.l, b.c])
+        });
+      }
+    }
     return { symbol: row.symbol, covered: candles.length, trades };
   });
 
@@ -197,6 +212,10 @@ async function leaderboard(top) {
 
   fs.mkdirSync('data', { recursive: true });
   fs.writeFileSync('data/ignition-leaderboard.json', JSON.stringify({ at: Date.now(), days, rows }, null, 1));
+  if (has('dump')) {
+    fs.writeFileSync('data/ignition-windows.json', JSON.stringify(WINDOWS));
+    process.stderr.write(`[dump] ${WINDOWS.length} forward windows → data/ignition-windows.json\n`);
+  }
 
   const live = rows.filter(r => r.survivedMax).sort((a, b) => b.peakAtMax - a.peakAtMax).slice(0, top);
   const dead = rows.filter(r => !r.survivedMax).length;

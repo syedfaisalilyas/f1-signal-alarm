@@ -156,7 +156,8 @@ if (ig.enabled !== false && !settings.muted) {
         `Range ${f.rangeX.toFixed(1)}× ATR · volume ${f.volX.toFixed(1)}× · body ${(f.bodyRatio * 100).toFixed(0)}%\n` +
         `Entry ${n(f.entry)}\n` +
         `Stop  ${n(f.stop)}   (${f.riskPct.toFixed(2)}%)\n` +
-        `TP1   ${n(f.tp1)}   TP2 ${n(f.tp2)}   (${f.rr1.toFixed(1)}R)\n` +
+        `Then trail ${((f.trailGive ?? 0.25) * 100).toFixed(0)}% below the high — do not sell at a fixed target.\n` +
+        `(ref TP1 ${n(f.tp1)} · TP2 ${n(f.tp2)} · ${f.rr1.toFixed(1)}R)\n` +
         `24h volume $${(r.quoteVol / 1e6).toFixed(1)}M · ${r.changePct.toFixed(1)}% today`;
 
       state.log.unshift({
