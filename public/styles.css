@@ -372,3 +372,7 @@ main{max-width:1400px;margin:0 auto;padding:0 16px}
 #pastApply.done{color:var(--up);border-color:rgba(38,208,124,.5);background:rgba(38,208,124,.12)}
 
 .stamp2{color:var(--faint);font-size:10px;letter-spacing:.03em}
+
+/* Where the move actually topped, so the exit can be read against it. */
+.coilrow.past .plan .peaked{color:var(--warn)}
+.coilrow.past .plan .peaked b{color:var(--warn)}

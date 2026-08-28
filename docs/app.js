@@ -736,6 +736,7 @@ function drawPast() {
       </div>
       <div class="plan">
         <span>in <b>${when(h.entryTime)}</b> @ ${px(h.entry)}</span>
+        ${h.peakTime ? `<span class="peaked">peak <b>${when(h.peakTime)}</b> @ ${px(h.peakPrice)}</span>` : ''}
         <span>out <b>${when(h.exitTime)}</b> @ ${px(h.exit)}</span>
         <span class="rr">out of a ${h.coilPct?.toFixed(1) ?? '—'}% coil</span>
       </div>`);

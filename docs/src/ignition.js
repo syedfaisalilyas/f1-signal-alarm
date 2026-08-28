@@ -293,16 +293,17 @@ export function simulateTrail(bars, ev, cfg = {}) {
   const adv = p => (long ? fill - p : p - fill) / fill * 100;
 
   let stop = ev.stop, peak = fill, mae = 0, mfe = 0;
+  let peakPrice = fill, peakTime = entry.t;   // where the move actually topped
   for (let k = i + 1; k < bars.length; k++) {
     const b = bars[k];
     const a = adv(long ? b.l : b.h);
     if (a > mae) mae = a;
     const g = fav(long ? b.h : b.l);
-    if (g > mfe) mfe = g;
+    if (g > mfe) { mfe = g; peakPrice = long ? b.h : b.l; peakTime = b.t; }
 
     if (long ? b.l <= stop : b.h >= stop) {
       return { entryTime: entry.t, entry: fill, exitTime: b.t, exit: stop, open: false,
-               pnlPct: fav(stop), peakPct: mfe, dipPct: mae, bars: k - i };
+               peakTime, peakPrice, pnlPct: fav(stop), peakPct: mfe, dipPct: mae, bars: k - i };
     }
     peak = long ? Math.max(peak, b.h) : Math.min(peak, b.l);
     const t = long ? peak * (1 - give) : peak * (1 + give);
@@ -310,7 +311,7 @@ export function simulateTrail(bars, ev, cfg = {}) {
   }
   const last = bars[bars.length - 1];
   return { entryTime: entry.t, entry: fill, exitTime: last.t, exit: last.c, open: true,
-           pnlPct: fav(last.c), peakPct: mfe, dipPct: mae, bars: bars.length - 1 - i };
+           peakTime, peakPrice, pnlPct: fav(last.c), peakPct: mfe, dipPct: mae, bars: bars.length - 1 - i };
 }
 
 // A deeper look back than the live sweep holds.
