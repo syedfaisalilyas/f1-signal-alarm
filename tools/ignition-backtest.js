@@ -20,6 +20,7 @@ import fs from 'fs';
 import path from 'path';
 import { fetchCandlesDeep } from '../src/providers.js';
 import { ignitionEvents, universe, DEFAULTS } from '../src/ignition.js';
+import { maxLev, hydrate as hydrateLev } from '../src/leverage.js';
 
 const args = process.argv.slice(2);
 const has = n => args.includes(`--${n}`);
@@ -87,8 +88,10 @@ function outcome(bars, ev, horizon) {
   }
   if (exit === null) { exit = bars[Math.min(bars.length - 1, i + horizon)].c; exitBar = Math.min(bars.length - 1, i + horizon); }
   const pnlPct = (long ? exit - fill : fill - exit) / fill * 100;
+  const reason = exit === ev.stop ? 'stop' : exit === ev.tp2 ? 'TP2' : 'time';
   return {
     time: ev.barTime, side: ev.side, fill, mfe, mae, pnlPct, tp1, tp2,
+    entryTime: bars[i + 1].t, exitTime: bars[exitBar].t, exitPrice: exit, reason,
     riskPct: risk / fill * 100,
     r: (long ? exit - fill : fill - exit) / risk,
     barsHeld: exitBar - i, volX: ev.volX, rangeX: ev.rangeX, coilPct: ev.boxWidthPct
@@ -163,6 +166,56 @@ function report(res) {
   console.log(`  at 100x, ${(liq100 / t.length * 100).toFixed(0)}% of these are liquidated before the move happens`);
   return t;
 }
+
+// ── leaderboard: every timeframe pooled, priced at MEXC's real leverage ──
+// A trade is liquidated when price moves about 100/leverage percent against
+// it. So "profit at max leverage" is only a number if the position survived
+// to collect it — otherwise the answer is −100%, and pretending otherwise is
+// how the whole idea goes wrong.
+const liqAt = lev => 100 / lev;
+
+async function leaderboard(top) {
+  try { hydrateLev(JSON.parse(fs.readFileSync('cloud/leverage.json', 'utf8'))); } catch { /* falls back to defaults */ }
+
+  const rows = [];
+  for (const iv of ['5m', '15m', '1h']) {
+    const r = await run(iv);
+    for (const t of r.trades) {
+      const lev = maxLev('futures', t.symbol) || 1;
+      const survivedMax = t.mae < liqAt(lev);
+      // The most leverage this particular trade's own dip could survive,
+      // capped by what MEXC actually offers on that coin.
+      const fit = Math.max(1, Math.min(lev, Math.floor(t.mae > 0.05 ? 100 / t.mae : lev)));
+      rows.push({
+        ...t, interval: iv, mexcLev: lev, survivedMax,
+        peakAtMax: survivedMax ? t.mfe * lev : -100,
+        fitLev: fit, peakAtFit: t.mfe * fit
+      });
+    }
+    await sleep(20000);
+  }
+
+  fs.mkdirSync('data', { recursive: true });
+  fs.writeFileSync('data/ignition-leaderboard.json', JSON.stringify({ at: Date.now(), days, rows }, null, 1));
+
+  const live = rows.filter(r => r.survivedMax).sort((a, b) => b.peakAtMax - a.peakAtMax).slice(0, top);
+  const dead = rows.filter(r => !r.survivedMax).length;
+
+  console.log(`\n${rows.length} ignitions across 5m/15m/1h · ${days}d · ` +
+    `${dead} (${(dead / rows.length * 100).toFixed(0)}%) liquidated at MEXC max leverage before the move\n`);
+  console.log(`  ${'coin'.padEnd(14)}${'tf'.padEnd(5)}${'when'.padEnd(13)}${'side'.padEnd(7)}` +
+    `${'ran'.padStart(8)}${'dip'.padStart(8)}${'MEXC'.padStart(7)}${'at MEXC max'.padStart(13)}${'safer'.padStart(7)}${'at safer'.padStart(11)}`);
+  for (const r of live) {
+    console.log(`  ${r.symbol.padEnd(14)}${r.interval.padEnd(5)}` +
+      `${new Date(r.time).toISOString().slice(5, 16).replace('T', ' ').padEnd(13)}${r.side.padEnd(7)}` +
+      `${(r.mfe.toFixed(1) + '%').padStart(8)}${(r.mae.toFixed(2) + '%').padStart(8)}` +
+      `${(r.mexcLev + 'x').padStart(7)}${('+' + r.peakAtMax.toFixed(0) + '%').padStart(13)}` +
+      `${(r.fitLev + 'x').padStart(7)}${('+' + r.peakAtFit.toFixed(0) + '%').padStart(11)}`);
+  }
+  console.log(`\n  full table written to data/ignition-leaderboard.json`);
+}
+
+if (has('leaderboard')) { await leaderboard(+flag('leaderboard', 20) || 20); process.exit(0); }
 
 const intervals = has('compare') ? ['5m', '15m', '1h'] : [flag('interval', '15m')];
 const all = [];
