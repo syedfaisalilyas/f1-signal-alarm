@@ -537,6 +537,7 @@ function renderCoil(d) {
         <span class="iv">${d.interval}</span>
         <span class="side ${up ? 'up' : 'down'}">${up ? '🚀 LONG' : '🔻 SHORT'}</span>
         ${r.watched ? '<span class="tag">watching</span>' : ''}
+        ${f.grade === 'A' ? '' : '<span class="grade">weaker side</span>'}
         <span class="age ${f.barsAgo <= 1 ? 'hot' : ''}">${age}</span>
       </div>
       <div class="b2">

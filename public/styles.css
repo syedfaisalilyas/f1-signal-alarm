@@ -376,3 +376,7 @@ main{max-width:1400px;margin:0 auto;padding:0 16px}
 /* Where the move actually topped, so the exit can be read against it. */
 .coilrow.past .plan .peaked{color:var(--warn)}
 .coilrow.past .plan .peaked b{color:var(--warn)}
+
+/* Shorts fired the same way and lost money at leverage; say so on the row. */
+.coilrow .grade{font-size:9px;letter-spacing:.06em;text-transform:uppercase;color:var(--down);
+  padding:2px 6px;border-radius:5px;border:1px solid rgba(255,84,112,.35);background:rgba(255,84,112,.08)}

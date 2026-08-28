@@ -141,8 +141,13 @@ if (ig.enabled !== false && !settings.muted) {
     // buy the top.
     const freshMax = ig.fresh ?? 2;
     let sent = 0;
+    // Shorts on this setup lost money at leverage across the whole backtest, so
+    // the phone stays quiet for them unless asked otherwise. They still show on
+    // the board — this only decides what is worth waking up for.
+    const gradeOnly = ig.longsOnly !== false;
     for (const r of sweep.igniting) {
       if (r.fired.barsAgo > freshMax) continue;
+      if (gradeOnly && r.fired.grade !== 'A') continue;
       const key = `${r.symbol}:${sweep.interval}`;
       if (state.ignited[key] === r.fired.barTime) continue;
       state.ignited[key] = r.fired.barTime;
