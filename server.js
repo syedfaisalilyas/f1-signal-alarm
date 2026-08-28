@@ -7,13 +7,14 @@ import { fileURLToPath } from 'url';
 
 import * as store from './src/store.js';
 import { Feed } from './src/feed.js';
-import { searchSymbols, ticker24h, fetchCandlesDeep, listSymbols } from './src/providers.js';
+import { searchSymbols, ticker24h, fetchCandles, fetchCandlesDeep, listSymbols } from './src/providers.js';
 import { analyze } from './src/strategy.js';
 import { filterTrades, aggregate, coverage } from './src/history.js';
 import { initPush, channelStatus, buildMessage, dispatch } from './src/notify.js';
 import { DEFAULTS } from './src/strategy.js';
 import { VolatilityScanner } from './src/volatility.js';
 import { Screener } from './src/screener.js';
+import { IgnitionScanner } from './src/ignition.js';
 import { refresh as refreshLeverage, loaded as levLoaded, sourceName as levSourceName, setOverrides } from './src/leverage.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -41,6 +42,7 @@ initPush();
 const feed = new Feed(() => store.get().settings.cfg || {});
 const vol = new VolatilityScanner();
 const screener = new Screener(vol, () => store.get().settings.cfg || {});
+const igniter = new IgnitionScanner(fetchCandles, () => store.get().settings.ignition || {});
 
 // ─────────────── browser fan-out ───────────────
 function broadcast(type, payload) {
@@ -295,6 +297,28 @@ app.get('/api/screener', async (req, res) => {
       at: d.at, from: d.from, to: d.to, reach: d.reach,
       scanned: d.scanned, qualified: d.qualified, profitable: d.profitable,
       rows: d.rows.slice(0, 40).map(tag), bestPerCoin: d.bestPerCoin.slice(0, 20).map(tag)
+    });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// The whole board, not just the watchlist: which coin just left a dead range,
+// and which ones are wound up ready to. Cached — one sweep is ~300 requests.
+app.get('/api/ignition', async (req, res) => {
+  try {
+    const d = await igniter.run({
+      market: req.query.market === 'spot' ? 'spot' : 'futures',
+      interval: ['1m', '3m', '5m', '15m'].includes(req.query.interval) ? req.query.interval : '5m',
+      minQuoteVol: Math.max(1e5, Number(req.query.minVol) || 3e6)
+    });
+    const fresh = Math.max(1, Number(req.query.fresh) || 3);
+    const watched = new Set(feed.snapshot().map(w => `${w.market}:${w.symbol}`));
+    const tag = r => ({ ...r, watched: watched.has(`${r.market}:${r.symbol}`) });
+    res.json({
+      at: d.at, market: d.market, interval: d.interval,
+      scanned: d.scanned, analysed: d.analysed,
+      igniting: d.igniting.filter(r => r.fired.barsAgo <= fresh).map(tag),
+      stale: d.igniting.filter(r => r.fired.barsAgo > fresh).slice(0, 12).map(tag),
+      coiling: d.coiling.slice(0, 20).map(tag)
     });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });

@@ -23,6 +23,7 @@
     <button id="pushBtn" class="btn ghost" title="Push to this device">📱 Push</button>
     <button id="muteBtn" class="btn ghost" title="Mute all alerts">🔔 Live</button>
     <button id="bestBtn" class="btn ghost" title="Coins the strategy is actually profitable on">★ Best</button>
+    <button id="coilBtn" class="btn ghost" title="Coins breaking out of a dead range right now">🔥 Coil</button>
     <button id="testBtn" class="btn ghost">Test</button>
     <button id="cfgBtn" class="btn ghost">⚙</button>
   </div>
@@ -142,6 +143,52 @@
     </div>
     <div id="bestMeta" class="histmeta"></div>
     <div id="bestRows" class="hrows"></div>
+  </div>
+</div>
+
+<!-- coil → ignition -->
+<div id="coilModal" class="modal hidden">
+  <div class="sheet">
+    <div class="sheethead">
+      <div>
+        <h2>Coil → ignition</h2>
+        <div class="dim" style="font-size:12px;margin-top:3px">
+          The whole board, not the watchlist — what just left a dead range, and what is wound up ready to</div>
+      </div>
+      <button id="coilClose" class="btn ghost">✕</button>
+    </div>
+    <div class="histctl">
+      <label>Timeframe
+        <select id="coilTf">
+          <option value="1m">1m — fastest, noisiest</option>
+          <option value="3m">3m</option>
+          <option value="5m" selected>5m</option>
+          <option value="15m">15m</option>
+        </select>
+      </label>
+      <label>Min 24h volume
+        <select id="coilVol">
+          <option value="1000000">$1M</option>
+          <option value="3000000" selected>$3M</option>
+          <option value="10000000">$10M</option>
+          <option value="50000000">$50M</option>
+        </select>
+      </label>
+      <label>Fresh within
+        <select id="coilFresh">
+          <option value="1">1 candle</option>
+          <option value="3" selected>3 candles</option>
+          <option value="6">6 candles</option>
+          <option value="12">12 candles</option>
+        </select>
+      </label>
+      <button id="coilRefresh" class="btn ghost">↻</button>
+    </div>
+    <div id="coilMeta" class="histmeta"></div>
+    <h3 class="coilhead">🚀 Igniting now</h3>
+    <div id="coilFired" class="hrows"></div>
+    <h3 class="coilhead">🎯 Coiled and ripe — the ones to have open</h3>
+    <div id="coilReady" class="hrows"></div>
   </div>
 </div>
 

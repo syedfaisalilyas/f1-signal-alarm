@@ -309,3 +309,35 @@ main{max-width:1400px;margin:0 auto;padding:0 16px}
 .histmeta .warn { color:var(--warn); font-size:12px }
 /* Filters split over two rows should still read as one block of controls. */
 .histctl + .histctl { margin-top:-4px }
+
+/* ── coil → ignition ── */
+.coilhead{font-size:12px;font-weight:650;color:var(--dim);letter-spacing:.02em;
+  margin:16px 0 8px;padding-bottom:6px;border-bottom:1px solid var(--line)}
+.coilhead:first-of-type{margin-top:4px}
+
+.coilrow{border-left-width:3px}
+.coilrow.long{border-left-color:var(--up)}
+.coilrow.short{border-left-color:var(--down)}
+.coilrow.ready{border-left-color:var(--warn)}
+.coilrow .side{font-size:11px;font-weight:700;letter-spacing:.03em}
+/* The age of the break is the whole trade — a fresh one has to shout. */
+.coilrow .age{margin-left:auto;font-size:10px;color:var(--faint);
+  padding:2px 7px;border-radius:6px;background:var(--panel);border:1px solid var(--line)}
+.coilrow .age.hot{color:var(--warn);border-color:#4a3a1a;background:rgba(255,176,46,.08)}
+.coilrow .b2 b{color:var(--fg);font-weight:650}
+
+.plan{display:flex;flex-wrap:wrap;align-items:baseline;gap:12px;margin-top:8px;
+  padding-top:8px;border-top:1px solid var(--line);font-size:11px;color:var(--dim)}
+.plan b{font-weight:650;color:var(--fg)}
+.plan em{font-style:normal;color:var(--faint);font-size:10px}
+.plan .rr{margin-left:auto;color:var(--info);font-weight:650}
+.plan.trig em{margin-left:auto;text-align:right}
+
+/* Readiness as a dial, so the ripe ones read at a glance. */
+.ready{position:relative;flex:0 0 auto;width:30px;height:30px;border-radius:50%;
+  display:grid;place-items:center;font-size:11px;font-weight:700;color:var(--warn);
+  background:conic-gradient(var(--warn) var(--v),var(--line) 0)}
+.ready::after{content:'';position:absolute;inset:3px;border-radius:50%;background:var(--panel2)}
+/* The number sits above the donut hole that punches out the ring. */
+.ready i{position:relative;z-index:1;font-style:normal}
+.coilrow.ready .b1{gap:10px}

@@ -466,6 +466,123 @@ function renderBest(d) {
   }
 }
 
+// ─────────── coil → ignition ───────────
+$('#coilBtn').onclick = () => { $('#coilModal').classList.remove('hidden'); loadCoil(); };
+$('#coilClose').onclick = () => $('#coilModal').classList.add('hidden');
+$('#coilModal').onclick = e => { if (e.target.id === 'coilModal') $('#coilModal').classList.add('hidden'); };
+$('#coilTf').onchange = loadCoil;
+$('#coilVol').onchange = loadCoil;
+$('#coilFresh').onchange = () => renderCoil(lastCoil);
+$('#coilRefresh').onclick = loadCoil;
+
+let lastCoil = null;
+async function loadCoil() {
+  $('#coilMeta').textContent = 'sweeping every liquid perp… one pass is a few hundred requests';
+  $('#coilFired').innerHTML = '';
+  $('#coilReady').innerHTML = '';
+  try {
+    // Ask for the widest freshness the picker offers and narrow it here, so
+    // changing "fresh within" re-filters instantly instead of re-sweeping.
+    lastCoil = await apiJson(`/api/ignition?interval=${$('#coilTf').value}`
+      + `&minVol=${$('#coilVol').value}&fresh=12`);
+    if (lastCoil.error) throw new Error(lastCoil.error);
+    renderCoil(lastCoil);
+  } catch (e) {
+    $('#coilMeta').textContent = 'sweep failed: ' + e.message;
+  }
+}
+
+const px = v => v === null || v === undefined ? '—'
+  : Math.abs(v) >= 1000 ? v.toFixed(2) : Math.abs(v) >= 1 ? v.toFixed(4) : v.toPrecision(5);
+
+function renderCoil(d) {
+  if (!d) return;
+  const fresh = Number($('#coilFresh').value) || 3;
+  const all = [...(d.igniting || []), ...(d.stale || [])];
+  const fired = all.filter(r => r.fired.barsAgo <= fresh)
+    .sort((a, b) => a.fired.barsAgo - b.fired.barsAgo || b.fired.volX - a.fired.volX);
+
+  $('#coilMeta').innerHTML =
+    `swept ${d.scanned} liquid ${d.market} symbols on ${d.interval} · ` +
+    `<b>${fired.length}</b> igniting within ${fresh} candle${fresh > 1 ? 's' : ''} · ` +
+    `<b>${d.coiling.length}</b> coiled`;
+
+  const fbox = $('#coilFired');
+  fbox.innerHTML = '';
+  if (!fired.length) {
+    fbox.innerHTML = '<div class="hempty">Nothing igniting right now — watch the coiled list.</div>';
+  }
+  for (const r of fired) {
+    const f = r.fired;
+    const up = f.side === 'LONG';
+    // barsAgo is the whole point: the first candle is the trade, and six
+    // candles later it is someone else's trade.
+    const age = f.barsAgo === 0 ? 'this candle' : `${f.barsAgo} candle${f.barsAgo > 1 ? 's' : ''} ago`;
+    const n = el('div', 'brow coilrow' + (up ? ' long' : ' short') + (r.watched ? ' watched' : ''), `
+      <div class="b1">
+        <span class="bsym">${r.symbol}</span>
+        <span class="iv">${d.interval}</span>
+        <span class="side ${up ? 'up' : 'down'}">${up ? '🚀 LONG' : '🔻 SHORT'}</span>
+        ${r.watched ? '<span class="tag">watching</span>' : ''}
+        <span class="age ${f.barsAgo <= 1 ? 'hot' : ''}">${age}</span>
+      </div>
+      <div class="b2">
+        <span>range <b>${f.rangeX.toFixed(1)}×</b> ATR</span>
+        <span>vol <b>${f.volX.toFixed(1)}×</b></span>
+        <span>body ${(f.bodyRatio * 100).toFixed(0)}%</span>
+        <span>out of a ${f.boxWidthPct.toFixed(1)}% coil</span>
+      </div>
+      <div class="plan">
+        <span>entry <b>${px(f.entry)}</b></span>
+        <span>stop <b class="down">${px(f.stop)}</b> <em>${f.riskPct.toFixed(2)}%</em></span>
+        <span>TP1 <b class="up">${px(f.tp1)}</b></span>
+        <span>TP2 <b class="up">${px(f.tp2)}</b></span>
+        <span class="rr">${f.rr1.toFixed(1)}R</span>
+      </div>
+      <div class="b3"><span>$${(r.quoteVol / 1e6).toFixed(1)}M 24h · ${r.changePct.toFixed(1)}% today</span></div>`);
+    n.onclick = () => watchFromCoil(r, d.interval);
+    fbox.appendChild(n);
+  }
+
+  const rbox = $('#coilReady');
+  rbox.innerHTML = '';
+  if (!d.coiling.length) {
+    rbox.innerHTML = '<div class="hempty">Nothing coiled — the whole board is moving.</div>';
+    return;
+  }
+  for (const r of d.coiling) {
+    const c = r.coil;
+    const n = el('div', 'brow coilrow ready' + (r.watched ? ' watched' : ''), `
+      <div class="b1">
+        <span class="ready" style="--v:${r.readiness}%"><i>${r.readiness}</i></span>
+        <span class="bsym">${r.symbol}</span>
+        <span class="iv">${d.interval}</span>
+        ${r.watched ? '<span class="tag">watching</span>' : ''}
+        <span class="dim">${px(r.price)}</span>
+      </div>
+      <div class="b2">
+        <span>box <b>${c.widthPct.toFixed(2)}%</b> wide</span>
+        <span>tightest <b>${c.tightRank.toFixed(0)}%</b> of its own day</span>
+        <span>vol <b>${(c.dryRatio * 100).toFixed(0)}%</b> of normal</span>
+      </div>
+      <div class="plan trig">
+        <span>break up <b class="up">${px(r.trigger.up)}</b></span>
+        <span>break down <b class="down">${px(r.trigger.down)}</b></span>
+        <em>pre-place these and the move takes you with it</em>
+      </div>`);
+    n.onclick = () => watchFromCoil(r, d.interval);
+    rbox.appendChild(n);
+  }
+}
+
+// The list is market-wide, so a row is only useful if you can put it on the
+// watchlist in one tap.
+function watchFromCoil(r, interval) {
+  if (r.watched) return;
+  $('#tf').value = interval;
+  addWatch({ market: r.market, symbol: r.symbol });
+}
+
 // ─────────── trade history ───────────
 let histId = null;
 

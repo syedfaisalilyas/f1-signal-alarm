@@ -1,0 +1,171 @@
+//@version=5
+indicator("COIL IGNITION — the first candle of the move", shorttitle="IGNITION", overlay=true,
+     max_labels_count=500, max_lines_count=500, max_boxes_count=100)
+
+// ════════════════════════════════════════════════════════════════════════
+//  The move you want to be early on has a shape:
+//
+//    1. The coin goes to sleep. Range collapses to the tightest it has been
+//       all day, volume drains away, nobody is watching it.
+//    2. One candle does more than the last twenty put together, on volume
+//       that has no business being there, and closes outside the base.
+//    3. It never comes back.
+//
+//  Step 1 is what puts a coin on the watchlist — the box and the ▲▼ triggers
+//  below are where to put resting orders. Step 2 is the alert.
+//
+//  The base is frozen at the last bar the coin was ASLEEP, not the trailing
+//  range. That matters: the stop-run that so often precedes the real move
+//  widens the recent range, and without freezing, the leg that pays no longer
+//  counts as a breakout of anything. TAC dumped 7% at 02:45 on 27 Aug and
+//  left the same base for good an hour later, +71%.
+// ════════════════════════════════════════════════════════════════════════
+
+gC = "① The coil"
+coilBars   = input.int(24,    "Coil window (bars)",   minval=5, group=gC, tooltip="2 hours on 5m.")
+histBars   = input.int(288,   "Ranked against (bars)", minval=50, group=gC, tooltip="A day on 5m. Absolute width is useless across coins — 1% is dead for a meme and a stampede for BTC.")
+tightRank  = input.float(25,  "Asleep = tightest N% of that history", step=5, group=gC)
+dryVol     = input.float(1.0, "…with volume no more than (× normal)", step=0.05, group=gC)
+squeezeMem = input.int(36,    "Base stays valid for (bars)", minval=5, group=gC)
+
+gI = "② The ignition candle"
+igniteAtr   = input.float(2.0,  "Range (× ATR)",             step=0.1, group=gI)
+igniteVol   = input.float(2.2,  "Volume (× 20-bar average)", step=0.1, group=gI)
+minPower    = input.float(6.0,  "Range × volume, at least",  step=0.5, group=gI, tooltip="One violent candle, not two mediocre ones.")
+minRangePct = input.float(1.5,  "…and at least this % move", step=0.1, group=gI)
+bodyMin     = input.float(0.50, "Body / range",              step=0.05, group=gI)
+closeMin    = input.float(0.60, "Close in the far share of the candle", step=0.05, group=gI)
+breakBuf    = input.float(0.10, "Close beyond the base by (× ATR)", step=0.05, group=gI)
+
+gR = "③ Plan"
+minRisk = input.float(0.80, "Stop no tighter than (× ATR)", step=0.1, group=gR)
+showBox = input.bool(true,  "Draw the base", group=gR)
+showLv  = input.bool(true,  "Draw entry / stop / targets", group=gR)
+
+// ═══════════════════════ CALCULATIONS ═══════════════════════
+atr   = ta.atr(14)
+vAvg  = ta.sma(volume, 20)
+hiN   = ta.highest(high, coilBars)
+loN   = ta.lowest(low, coilBars)
+width = close > 0 ? (hiN - loN) / close * 100 : na
+rank  = ta.percentrank(width, histBars)
+dry   = ta.sma(volume, histBars) > 0 ? ta.sma(volume, coilBars) / ta.sma(volume, histBars) : 1.0
+asleep = rank <= tightRank and dry <= dryVol
+
+// ─── the base, frozen at the last bar it was asleep ───
+var float baseHi  = na
+var float baseLo  = na
+var int   baseBar = na
+var bool  armed   = false
+var box   baseBox = na
+
+if asleep
+    baseHi  := hiN
+    baseLo  := loN
+    baseBar := bar_index
+    armed   := true
+    if showBox
+        if na(baseBox)
+            baseBox := box.new(bar_index - coilBars, baseHi, bar_index, baseLo, border_color=color.new(color.gray, 40), bgcolor=color.new(color.gray, 92))
+        else
+            box.set_lefttop(baseBox, bar_index - coilBars, baseHi)
+            box.set_rightbottom(baseBox, bar_index, baseLo)
+else if armed and not na(baseBar)
+    if bar_index - baseBar > squeezeMem
+        armed := false                       // the base went stale — no longer a coil
+    else if showBox and not na(baseBox)
+        box.set_right(baseBox, bar_index)
+
+// ─── the ignition candle ───
+rng      = high - low
+a        = atr[1]
+vRef     = vAvg[1]
+buf      = na(a) ? 0.0 : a * breakBuf
+rangeX   = na(a) or a == 0 ? 0.0 : rng / a
+volX     = na(vRef) or vRef == 0 ? 0.0 : volume / vRef
+rangePct = close > 0 and rng > 0 ? rng / close * 100 : 0.0
+bodyR    = rng > 0 ? math.abs(close - open) / rng : 0.0
+
+upBreak = armed and not na(baseHi) and close > baseHi + buf
+dnBreak = armed and not na(baseLo) and close < baseLo - buf
+closePos = rng > 0 ? (upBreak ? (close - low) / rng : (high - close) / rng) : 0.0
+
+quality = rangeX >= igniteAtr and volX >= igniteVol and rangeX * volX >= minPower and
+          rangePct >= minRangePct and bodyR >= bodyMin and closePos >= closeMin
+
+fireUp = upBreak and quality and not asleep
+fireDn = dnBreak and quality and not asleep
+
+// ─── the plan, fixed on the ignition bar ───
+var float entryP = na
+var float stopP  = na
+var float tp1P   = na
+var float tp2P   = na
+var int   fireIx = na
+var int   dirV   = 0
+
+if fireUp or fireDn
+    dirV   := fireUp ? 1 : -1
+    entryP := close
+    boxH   = baseHi - baseLo
+    // stop where the break is proven wrong — back inside the base — but never
+    // tighter than noise, and never wider than the ignition candle itself
+    raw    = dirV == 1 ? math.min(baseHi - buf, close - a * minRisk) : math.max(baseLo + buf, close + a * minRisk)
+    stopP  := dirV == 1 ? math.max(raw, low - buf) : math.min(raw, high + buf)
+    tp1P   := entryP + dirV * boxH
+    tp2P   := entryP + dirV * boxH * 2
+    fireIx := bar_index
+    armed  := false                          // one ignition per base
+
+    riskPct = math.abs(entryP - stopP) / entryP * 100
+    label.new(bar_index, dirV == 1 ? low : high,
+      (dirV == 1 ? "🚀 IGNITION LONG" : "🔻 IGNITION SHORT") +
+      "\n" + str.tostring(rangeX, "#.#") + "× ATR · " + str.tostring(volX, "#.#") + "× volume" +
+      "\nout of a " + str.tostring((baseHi - baseLo) / baseHi * 100, "#.#") + "% base" +
+      "\nEntry " + str.tostring(entryP, format.mintick) +
+      "\nStop  " + str.tostring(stopP, format.mintick) + "  (" + str.tostring(riskPct, "#.##") + "%)" +
+      "\nTP1   " + str.tostring(tp1P, format.mintick) +
+      "\nTP2   " + str.tostring(tp2P, format.mintick),
+      style = dirV == 1 ? label.style_label_up : label.style_label_down,
+      color = dirV == 1 ? color.new(color.green, 10) : color.new(color.red, 10),
+      textcolor=color.white, size=size.normal)
+
+    alert((dirV == 1 ? "🚀 IGNITION LONG " : "🔻 IGNITION SHORT ") + syminfo.ticker + " " + timeframe.period +
+      " @ " + str.tostring(entryP, format.mintick) +
+      " | " + str.tostring(rangeX, "#.#") + "×ATR " + str.tostring(volX, "#.#") + "×vol" +
+      " | stop " + str.tostring(stopP, format.mintick) + " (" + str.tostring(riskPct, "#.##") + "%)" +
+      " | TP1 " + str.tostring(tp1P, format.mintick) + " TP2 " + str.tostring(tp2P, format.mintick),
+      alert.freq_once_per_bar)
+
+live = not na(fireIx) and bar_index - fireIx <= 60
+plot(live ? entryP : na, "Entry", color.new(color.gray, 20), 1, plot.style_linebr)
+plot(live and showLv ? stopP : na, "Stop", color.new(color.red, 0),  1, plot.style_linebr)
+plot(live and showLv ? tp1P  : na, "TP1",  color.new(color.teal, 0), 2, plot.style_linebr)
+plot(live and showLv ? tp2P  : na, "TP2",  color.new(color.teal, 45), 1, plot.style_linebr)
+
+// ─── while it sleeps: where to leave the orders ───
+bgcolor(asleep ? color.new(color.blue, 92) : na, title="Asleep")
+
+var label lbUp = na
+var label lbDn = na
+if barstate.islast
+    label.delete(lbUp)
+    label.delete(lbDn)
+    if armed and not na(baseHi)
+        lbUp := label.new(bar_index + 3, baseHi + buf, "▲ " + str.tostring(baseHi + buf, format.mintick) + "  (+" + str.tostring((baseHi + buf - close) / close * 100, "#.##") + "%)", style=label.style_label_left, color=color.new(color.teal, 30), textcolor=color.white, size=size.small)
+        lbDn := label.new(bar_index + 3, baseLo - buf, "▼ " + str.tostring(baseLo - buf, format.mintick) + "  (" + str.tostring((baseLo - buf - close) / close * 100, "#.##") + "%)", style=label.style_label_left, color=color.new(color.maroon, 30), textcolor=color.white, size=size.small)
+
+var table t = table.new(position.top_right, 2, 4, border_width=1)
+if barstate.islast
+    table.cell(t, 0, 0, "COIL", text_color=color.white, bgcolor=color.new(color.blue, 20), text_size=size.small)
+    table.cell(t, 1, 0, armed ? (asleep ? "ASLEEP" : "ARMED") : "—", text_color = armed ? color.lime : color.gray, bgcolor=color.new(color.blue, 20), text_size=size.small)
+    table.cell(t, 0, 1, "Width", text_color=color.gray, text_size=size.small)
+    table.cell(t, 1, 1, str.tostring(width, "#.##") + "%", text_color=color.white, text_size=size.small)
+    table.cell(t, 0, 2, "Tightest", text_color=color.gray, text_size=size.small)
+    table.cell(t, 1, 2, str.tostring(rank, "#") + "%", text_color = rank <= tightRank ? color.lime : color.white, text_size=size.small)
+    table.cell(t, 0, 3, "Volume", text_color=color.gray, text_size=size.small)
+    table.cell(t, 1, 3, str.tostring(dry * 100, "#") + "% of normal", text_color = dry <= dryVol ? color.lime : color.white, text_size=size.small)
+
+alertcondition(fireUp, "Ignition LONG",  "🚀 IGNITION LONG @{{close}} — broke the base on volume")
+alertcondition(fireDn, "Ignition SHORT", "🔻 IGNITION SHORT @{{close}} — broke the base on volume")
+alertcondition(asleep and not asleep[1], "Coil formed", "Coin just went to sleep — coil formed, watch the edges")

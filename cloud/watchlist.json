@@ -41,6 +41,13 @@
     "muted": false,
     "lowVolAlerts": true,
     "lowVol1h": 1,
-    "levOverride": {}
+    "levOverride": {},
+    "ignition": {
+      "enabled": true,
+      "market": "futures",
+      "interval": "5m",
+      "minQuoteVol": 3000000,
+      "fresh": 2
+    }
   }
 }

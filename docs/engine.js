@@ -14,9 +14,10 @@
 
 import { Feed } from './src/feed.js';
 import { analyze, DEFAULTS } from './src/strategy.js';
-import { searchSymbols, listSymbols, fetchCandlesDeep } from './src/providers.js';
+import { searchSymbols, listSymbols, fetchCandles, fetchCandlesDeep } from './src/providers.js';
 import { VolatilityScanner } from './src/volatility.js';
 import { Screener } from './src/screener.js';
+import { IgnitionScanner } from './src/ignition.js';
 import { hydrate as hydrateLeverage, setOverrides } from './src/leverage.js';
 import { buildMessage } from './src/notify.js';
 import { filterTrades, aggregate, coverage } from './src/history.js';
@@ -37,6 +38,7 @@ const save = () => { try { localStorage.setItem(KEY, JSON.stringify(state)); } c
 const feed = new Feed(() => state.settings.cfg || {});
 const vol = new VolatilityScanner();
 const screener = new Screener(vol, () => state.settings.cfg || {});
+const igniter = new IgnitionScanner(fetchCandles, () => state.settings.ignition || {});
 
 setOverrides(state.settings.levOverride || {});
 
@@ -263,6 +265,24 @@ async function route(path, params, method, body) {
       at: d.at, from: d.from, to: d.to, reach: d.reach,
       scanned: d.scanned, qualified: d.qualified, profitable: d.profitable,
       rows: d.rows.slice(0, 40).map(tag), bestPerCoin: d.bestPerCoin.slice(0, 20).map(tag)
+    });
+  }
+
+  if (path === '/api/ignition') {
+    const d = await igniter.run({
+      market: params.get('market') === 'spot' ? 'spot' : 'futures',
+      interval: ['1m', '3m', '5m', '15m'].includes(params.get('interval')) ? params.get('interval') : '5m',
+      minQuoteVol: Math.max(1e5, Number(params.get('minVol')) || 3e6)
+    });
+    const fresh = Math.max(1, Number(params.get('fresh')) || 3);
+    const watched = new Set(state.watches.map(w => `${w.market}:${w.symbol}`));
+    const tag = r => ({ ...r, watched: watched.has(`${r.market}:${r.symbol}`) });
+    return json({
+      at: d.at, market: d.market, interval: d.interval,
+      scanned: d.scanned, analysed: d.analysed,
+      igniting: d.igniting.filter(r => r.fired.barsAgo <= fresh).map(tag),
+      stale: d.igniting.filter(r => r.fired.barsAgo > fresh).slice(0, 12).map(tag),
+      coiling: d.coiling.slice(0, 20).map(tag)
     });
   }
 

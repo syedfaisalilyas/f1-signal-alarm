@@ -13,6 +13,7 @@ import fs from 'fs';
 import path from 'path';
 import { fetchCandles, feedSources } from './src/providers.js';
 import { analyze } from './src/strategy.js';
+import { scanUniverse } from './src/ignition.js';
 import { buildMessage, dispatch, initPush } from './src/notify.js';
 import { refresh as refreshLeverage, dump as leverageDump } from './src/leverage.js';
 
@@ -117,12 +118,77 @@ for (const [kind, w, a] of fired) {
   console.log(`[${kind}] ${w.symbol} ${w.interval} →`, JSON.stringify(res));
 }
 
+// ─── market-wide coil watch ───
+// The loop above tells you what your setups are doing on the four coins you
+// chose. This asks the other question: out of every liquid perp on the
+// exchange, which one just left a dead range? Same dedupe plumbing — one alert
+// per symbol per candle, remembered in the same state file.
+const ig = settings.ignition || {};
+const igniteFirstRun = !state.ignited;      // seed silently, don't blast the board
+state.ignited ||= {};
+
+if (ig.enabled !== false && !settings.muted) {
+  try {
+    const sweep = await scanUniverse({
+      market: ig.market || 'futures',
+      interval: ig.interval || '5m',
+      minQuoteVol: ig.minQuoteVol || 3e6,
+      cfg: ig.cfg || {},
+      fetchCandles
+    });
+    // Only a break that is still fresh. A coin that left its base twenty
+    // candles ago is not "from the start" any more, and chasing it is how you
+    // buy the top.
+    const freshMax = ig.fresh ?? 2;
+    let sent = 0;
+    for (const r of sweep.igniting) {
+      if (r.fired.barsAgo > freshMax) continue;
+      const key = `${r.symbol}:${sweep.interval}`;
+      if (state.ignited[key] === r.fired.barTime) continue;
+      state.ignited[key] = r.fired.barTime;
+      if (igniteFirstRun) continue;
+
+      const f = r.fired;
+      const n = v => Math.abs(v) >= 1000 ? v.toFixed(2) : Math.abs(v) >= 1 ? v.toFixed(4) : v.toPrecision(6);
+      const title = `${f.side === 'LONG' ? '🚀' : '🔻'} IGNITION ${f.side} ${r.symbol} ${sweep.interval}`;
+      const body =
+        `Broke a ${f.boxWidthPct.toFixed(1)}% coil (${f.coilBars} bars) at ${n(f.side === 'LONG' ? f.boxHi : f.boxLo)}\n` +
+        `Range ${f.rangeX.toFixed(1)}× ATR · volume ${f.volX.toFixed(1)}× · body ${(f.bodyRatio * 100).toFixed(0)}%\n` +
+        `Entry ${n(f.entry)}\n` +
+        `Stop  ${n(f.stop)}   (${f.riskPct.toFixed(2)}%)\n` +
+        `TP1   ${n(f.tp1)}   TP2 ${n(f.tp2)}   (${f.rr1.toFixed(1)}R)\n` +
+        `24h volume $${(r.quoteVol / 1e6).toFixed(1)}M · ${r.changePct.toFixed(1)}% today`;
+
+      state.log.unshift({
+        kind: 'IGNITION', id: `${r.market}:${r.symbol}:${sweep.interval}`,
+        symbol: r.symbol, interval: sweep.interval, market: r.market,
+        title, body, priority: 5, side: f.side, detail: f, at: Date.now()
+      });
+      const res = await dispatch({
+        title, body, priority: 5, tags: ['rocket'],
+        telegram: `<b>${title}</b>\n<pre>${body}</pre>`
+      }, [], () => {});
+      sent++;
+      console.log(`[IGNITION] ${r.symbol} ${sweep.interval} →`, JSON.stringify(res));
+    }
+    console.log(`[ignite] ${sweep.scanned} symbols on ${sweep.interval}, ` +
+      `${sweep.igniting.length} igniting, ${sweep.coiling.length} coiled, ${sent} alert(s)` +
+      (igniteFirstRun ? ' — first run, seeded silently' : ''));
+  } catch (e) {
+    console.error('[ignite] sweep failed:', e.message);
+  }
+}
+
+// Keep the dedupe map from growing forever.
+const igCutoff = Date.now() - 24 * 60 * 60 * 1000;
+for (const [k, t] of Object.entries(state.ignited)) if (t < igCutoff) delete state.ignited[k];
+
 if (state.log.length > 300) state.log.length = 300;
 state.lastRun = Date.now();
 
 // The watchlist is not written back — main owns it.
 fs.writeFileSync(STATE, JSON.stringify(
-  { marks: state.marks, log: state.log, lastRun: state.lastRun }, null, 2));
+  { marks: state.marks, ignited: state.ignited, log: state.log, lastRun: state.lastRun }, null, 2));
 fs.writeFileSync(SNAPSHOT, JSON.stringify({
   at: state.lastRun,
   sources: feedSources(),
