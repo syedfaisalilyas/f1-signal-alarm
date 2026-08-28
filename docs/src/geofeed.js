@@ -63,6 +63,21 @@ export async function mexcTicker(symbol) {
   return { price: +d.lastPrice, changePct: +d.riseFallRate * 100, volume: +d.amount24 };
 }
 
+// The whole perp board in one call — what fapi's bulk ticker gives, for the
+// regions where fapi answers 451.
+export async function mexcAllTickers() {
+  const d = (await jget(`${MEXC}/ticker`)).data || [];
+  return d.map(t => {
+    const [base, quote] = t.symbol.split('_');
+    return {
+      symbol: `${base}${quote}`,
+      price: +t.lastPrice,
+      changePct: +t.riseFallRate * 100,
+      quoteVol: +t.amount24            // amount24 is quote volume, volume24 is contracts
+    };
+  }).filter(r => r.symbol && isFinite(r.quoteVol));
+}
+
 export async function mexcPerps() {
   const d = (await jget(`${MEXC}/detail`)).data || [];
   return d

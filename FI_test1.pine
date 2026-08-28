@@ -1,0 +1,564 @@
+//@version=5
+indicator("FI TEST1 — Liquidity TP", shorttitle="FI T1", overlay=true, max_labels_count=500, max_lines_count=500)
+
+// ════════════════════════════════════════════════════════════════════════
+//  FI + LIQUIDITY TAKE-PROFIT
+//
+//  Price runs into a pool of resting stops, takes it, and turns. So the
+//  pool isn't a level to chase through — it IS the exit.
+//
+//  Two ways this script finds liquidity, because Pine can't read CoinGlass:
+//
+//  1. PEAKS. Every swing high/low is stops. How BIG the pool is = how big
+//     the move that built the peak was, measured in ATR (the leg into it
+//     and the rejection out of it), boosted by the volume on that candle
+//     and by how many times price has tapped the same level. That score
+//     is what separates a real pool from a scratch on the chart.
+//
+//  2. LIQUIDATION BANDS. A peak is where the trapped side entered. Shorts
+//     that sold the high blow up at high × (1 + 1/leverage); longs that
+//     bought the low blow up at low × (1 − 1/leverage). Projecting 25x /
+//     50x / 100x off a big peak reproduces the CoinGlass bands closely —
+//     0.04973 × 1.02 = 0.05072, × 1.035 = 0.05147.
+//
+//  TP1 = the nearest pool big enough to matter. Not the nearest pivot.
+// ════════════════════════════════════════════════════════════════════════
+
+type Pool
+    float lvl        // where the stops sit
+    int   bar        // bar the peak printed
+    int   touches    // swings stacked here — EQH / EQL
+    float score      // size of the move that built it, in ATR
+    bool  isLiq      // true = projected liquidation band, false = raw peak
+    float lev        // which leverage the band belongs to (0 for peaks)
+    line  ln
+
+// ═══════════════════ ① SIGNAL ENGINE (original FI) ═══════════════════
+gS = "① Signal Engine"
+emaFastLength = input.int(9,     "Fast EMA Length",         group=gS)
+emaSlowLength = input.int(21,    "Slow EMA Length",         group=gS)
+rsiLength     = input.int(14,    "RSI Length",              group=gS)
+rsiOverbought = input.int(70,    "RSI Overbought",          group=gS)
+rsiOversold   = input.int(30,    "RSI Oversold",            group=gS)
+macdFastLen   = input.int(12,    "MACD Fast Length",        group=gS)
+macdSlowLen   = input.int(26,    "MACD Slow Length",        group=gS)
+macdSignalLen = input.int(9,     "MACD Signal Length",      group=gS)
+volLen        = input.int(20,    "Volume MA Length",        group=gS)
+volMult       = input.float(1.5, "Volume Spike Multiplier", step=0.1, group=gS)
+requireVol    = input.bool(false,"Only take volume-confirmed entries", group=gS)
+entryOnClose  = input.bool(true, "Confirm entries on bar close",       group=gS)
+
+// ═══════════════════ ② LIQUIDITY MAP ═══════════════════
+gL = "② Liquidity map"
+pvtLeft   = input.int(5,     "Pivot left bars",  minval=1, group=gL)
+pvtRight  = input.int(5,     "Pivot right bars", minval=1, group=gL, tooltip="A peak is only confirmed this many bars after it prints. Higher = fewer, heavier peaks.")
+eqTolAtr  = input.float(0.15,"Merge levels within (× ATR)", step=0.05, group=gL, tooltip="Two peaks this close are one pool — an EQH/EQL, where stops stack.")
+medMin    = input.float(1.0, "MEDIUM pool = move of (× ATR)", step=0.1, group=gL)
+bigMin    = input.float(2.0, "BIG pool = move of (× ATR)",    step=0.1, group=gL, tooltip="Score = the bigger of (leg into the peak, drop out of it) in ATR, × a volume boost, × stacked touches.")
+maxPools  = input.int(20,    "Max live pools per side", minval=4, group=gL, tooltip="When full, the WEAKEST pool is dropped — big ones survive.")
+sweepMode = input.string("Wick", "A pool is taken when", options=["Wick","Close"], group=gL)
+
+// ═══════════════════ ③ LIQUIDATION BANDS (CoinGlass-style) ═══════════════════
+gB = "③ Liquidation bands"
+useLiqBands = input.bool(true,   "Project liquidation bands off peaks", group=gB, tooltip="This is a model, not exchange data. Pine cannot read the CoinGlass heatmap — this rebuilds it from where the trapped side entered.")
+levStr      = input.string("25,50,100", "Leverages (comma separated)",  group=gB)
+liqMinSize  = input.string("Medium", "Only project off pools of size", options=["Any","Medium","Big"], group=gB)
+liqWeight   = input.float(0.9,  "Band score vs its peak (×)", step=0.05, group=gB)
+mmrPct      = input.float(0.5,  "Maintenance margin + fees (%)", step=0.1, group=gB, tooltip="Liquidation hits before a 100% loss, so the band sits slightly NEARER than 1/leverage. 0.5% is what makes 0.04973 project onto the 0.05143 band you see on CoinGlass.")
+
+// ═══════════════════ ④ RISK ═══════════════════
+gR = "④ Risk"
+atrLen     = input.int(14,     "ATR Length",                          group=gR)
+tpMinSize  = input.string("Big","TP1 must be a pool of size", options=["Any","Medium","Big"], group=gR, tooltip="The whole point: aim at the nearest BIG pool, not the nearest scratch.")
+tpFallback = input.bool(true,  "…fall back to a smaller pool if none", group=gR)
+minTpAtr   = input.float(0.50, "Min distance to a usable TP (× ATR)",  step=0.05, group=gR)
+slMode     = input.string("Liquidity", "Stop basis", options=["Liquidity","Swing","Prev candle","ATR"], group=gR)
+slLookback = input.int(3,      "Swing lookback (bars)", minval=1,  group=gR)
+slAtrMult  = input.float(1.2,  "ATR stop multiplier",   step=0.1,  group=gR)
+slBuf      = input.float(0.25, "Stop buffer (× ATR)",   step=0.05, group=gR)
+minRiskAtr = input.float(0.35, "Min stop distance (× ATR)", step=0.05, group=gR)
+rrFb1      = input.float(1.0,  "Fallback TP1 (R) if no pool", step=0.1, group=gR)
+rrFb2      = input.float(2.0,  "Fallback TP2 (R) if no pool", step=0.1, group=gR)
+minRR      = input.float(0.0,  "Skip trade below this R:R (0 = never)", step=0.1, group=gR)
+exitOnTp1  = input.bool(false, "Close the whole trade at TP1",     group=gR)
+beAfterTp1 = input.bool(true,  "Move stop to breakeven after TP1", group=gR)
+useRevExit = input.bool(true,  "Bank early on a reversal candle",  group=gR)
+revInProfit= input.bool(true,  "   …only when in profit",          group=gR)
+maxBars    = input.int(40,     "Time stop (bars, 0 = off)",        group=gR)
+cooldown   = input.int(0,      "Cooldown bars after a close",      group=gR)
+
+// ═══════════════════ ⑤ VISUALS ═══════════════════
+gV = "⑤ Visuals"
+drawMinSize = input.string("Medium", "Draw pools of size", options=["Any","Medium","Big"], group=gV)
+showSwept   = input.bool(true,  "Keep taken pools on chart (grey)", group=gV)
+showNext    = input.bool(true,  "Label the next pool either side",  group=gV)
+showRaw     = input.bool(true,  "Show every raw FI signal (arrows)",group=gV)
+showLabels  = input.bool(true,  "Show trade labels",  group=gV)
+showStats   = input.bool(true,  "Show stats table",   group=gV)
+colBuy      = input.color(color.new(#26a69a, 25), "Peak above",  group=gV)
+colSell     = input.color(color.new(#ef5350, 25), "Peak below",  group=gV)
+colLiq      = input.color(color.new(#ab47bc, 35), "Liquidation band", group=gV)
+colTarget   = input.color(#ffb300, "Pool being targeted", group=gV)
+colSwept    = input.color(color.new(#787b86, 60), "Already taken", group=gV)
+
+// ═══════════════════════ CALCULATIONS ═══════════════════════
+emaFast = ta.ema(close, emaFastLength)
+emaSlow = ta.ema(close, emaSlowLength)
+rsi     = ta.rsi(close, rsiLength)
+atr     = ta.atr(atrLen)
+
+[macdLine, signalLine, macdHist] = ta.macd(close, macdFastLen, macdSlowLen, macdSignalLen)
+macdBull = macdLine > signalLine
+macdBear = macdLine < signalLine
+
+avgVolume = ta.sma(volume, volLen)
+volSpike  = volume > avgVolume * volMult
+
+swingLo = ta.lowest(low,  slLookback)
+swingHi = ta.highest(high, slLookback)
+
+// pivots — the raw peaks. Confirmed pvtRight bars late, so nothing repaints.
+ph = ta.pivothigh(high, pvtLeft, pvtRight)
+pl = ta.pivotlow(low,  pvtLeft, pvtRight)
+
+// the two legs around a peak, measured when it confirms
+legIntoHi = ta.lowest(low,  pvtLeft + 1)[pvtRight]
+legOutHi  = ta.lowest(low,  pvtRight)
+legIntoLo = ta.highest(high, pvtLeft + 1)[pvtRight]
+legOutLo  = ta.highest(high, pvtRight)
+pvtVolR   = avgVolume[pvtRight] > 0 ? volume[pvtRight] / avgVolume[pvtRight] : 1.0
+
+// ─── Reversal candles ───
+body   = math.abs(close - open)
+upWick = high - math.max(close, open)
+loWick = math.min(close, open) - low
+
+hammer       = loWick >= body * 2 and upWick <= body and close > open
+shootingStar = upWick >= body * 2 and loWick <= body and close < open
+bullEngulf   = close > open and close[1] < open[1] and close > open[1] and open < close[1]
+bearEngulf   = close < open and close[1] > open[1] and close < open[1] and open > close[1]
+bullRev      = hammer or bullEngulf
+bearRev      = shootingStar or bearEngulf
+
+// ─── Entries (unchanged FI logic) ───
+longBase  = ta.crossover(emaFast, emaSlow)  and rsi > rsiOversold   and macdBull
+shortBase = ta.crossunder(emaFast, emaSlow) and rsi < rsiOverbought and macdBear
+sigOk     = not entryOnClose or barstate.isconfirmed
+longSig   = longBase  and (not requireVol or volSpike) and sigOk
+shortSig  = shortBase and (not requireVol or volSpike) and sigOk
+
+// ═══════════════════════ THE POOL MAP ═══════════════════════
+// buy-side = old highs (short stops + short liquidations) → a LONG banks there
+// sell-side = old lows  (long stops + long liquidations)  → a SHORT banks there
+var array<Pool> buyPools = array.new<Pool>()
+var array<Pool> sellPools = array.new<Pool>()
+
+// leverages parsed once
+var array<float> levs = array.new_float()
+if barstate.isfirst
+    parts = str.split(levStr, ",")
+    if array.size(parts) > 0
+        for i = 0 to array.size(parts) - 1
+            v = str.tonumber(str.replace_all(array.get(parts, i), " ", ""))
+            if not na(v) and v > 1
+                array.push(levs, v)
+
+f_thr(_s) =>
+    _s == "Big" ? bigMin : _s == "Medium" ? medMin : 0.0
+
+f_sizeTxt(_score) =>
+    _score >= bigMin ? "BIG" : _score >= medMin ? "MED" : "small"
+
+f_style(_p, _isBuy) =>
+    if not na(_p.ln)
+        big = _p.score >= bigMin
+        med = _p.score >= medMin
+        line.set_color(_p.ln, _p.isLiq ? colLiq : (_isBuy ? colBuy : colSell))
+        line.set_width(_p.ln, big ? 3 : med ? 2 : 1)
+        line.set_style(_p.ln, _p.isLiq ? line.style_dotted : (big ? line.style_solid : line.style_dashed))
+    true
+
+// Register a peak (or a projected band). Anything inside the merge tolerance
+// is the same pool with more stops behind it — score goes up, not sideways.
+f_add(_pools, _lvl, _score, _isBuy, _isLiq, _lev) =>
+    int merged = -1
+    tol = atr * eqTolAtr
+    if array.size(_pools) > 0
+        for i = 0 to array.size(_pools) - 1
+            Pool q = array.get(_pools, i)
+            if math.abs(q.lvl - _lvl) <= tol
+                merged := i
+                break
+    if merged >= 0
+        Pool p = array.get(_pools, merged)
+        p.lvl     := _isBuy ? math.max(p.lvl, _lvl) : math.min(p.lvl, _lvl)
+        p.touches := p.touches + 1
+        p.score   := math.max(p.score, _score) + 0.25 * math.min(p.score, _score)
+        p.isLiq   := p.isLiq and _isLiq
+        if na(p.ln) and p.score >= f_thr(drawMinSize)
+            p.ln := line.new(p.bar, p.lvl, bar_index, p.lvl, style=line.style_dashed)
+        if not na(p.ln)
+            line.set_y1(p.ln, p.lvl)
+            line.set_y2(p.ln, p.lvl)
+        f_style(p, _isBuy)
+    else
+        line nl = na
+        if _score >= f_thr(drawMinSize)
+            nl := line.new(bar_index - pvtRight, _lvl, bar_index, _lvl, style=line.style_dashed)
+        Pool np = Pool.new(_lvl, bar_index - pvtRight, 1, _score, _isLiq, _lev, nl)
+        f_style(np, _isBuy)
+        array.push(_pools, np)
+        // full? drop the WEAKEST pool, never the biggest
+        if array.size(_pools) > maxPools
+            int worst = 0
+            float ws  = 1.0e18
+            for i = 0 to array.size(_pools) - 1
+                Pool q = array.get(_pools, i)
+                if q.score < ws
+                    ws    := q.score
+                    worst := i
+            Pool dead = array.remove(_pools, worst)
+            if not na(dead.ln)
+                line.delete(dead.ln)
+    true
+
+// Kill every pool this bar ran through; stretch the survivors to the right.
+f_sweep(_pools, _isBuy) =>
+    float took = na
+    if array.size(_pools) > 0
+        for i = array.size(_pools) - 1 to 0
+            Pool p = array.get(_pools, i)
+            taken = _isBuy ? (sweepMode == "Close" ? close > p.lvl : high > p.lvl) : (sweepMode == "Close" ? close < p.lvl : low < p.lvl)
+            if taken
+                if not na(p.ln)
+                    if showSwept
+                        line.set_x2(p.ln, bar_index)
+                        line.set_color(p.ln, colSwept)
+                        line.set_style(p.ln, line.style_dotted)
+                        line.set_width(p.ln, 1)
+                    else
+                        line.delete(p.ln)
+                took := na(took) ? p.lvl : (_isBuy ? math.max(took, p.lvl) : math.min(took, p.lvl))
+                array.remove(_pools, i)
+            else if not na(p.ln)
+                line.set_x2(p.ln, bar_index + 2)
+    took
+
+// Nearest (_n = 0) or second-nearest (_n = 1) live pool beyond _price that is
+// at least _minScore big. No sorting — one pass keeps the best two.
+f_target(_pools, _price, _minDist, _up, _n, _minScore) =>
+    float best  = na
+    float best2 = na
+    if array.size(_pools) > 0
+        for i = 0 to array.size(_pools) - 1
+            Pool p = array.get(_pools, i)
+            far = _up ? p.lvl >= _price + _minDist : p.lvl <= _price - _minDist
+            if far and p.score >= _minScore
+                if na(best) or (_up ? p.lvl < best : p.lvl > best)
+                    best2 := best
+                    best  := p.lvl
+                else if na(best2) or (_up ? p.lvl < best2 : p.lvl > best2)
+                    best2 := p.lvl
+    _n == 0 ? best : best2
+
+f_find(_pools, _lvl) =>
+    int idx = -1
+    if not na(_lvl) and array.size(_pools) > 0
+        for i = 0 to array.size(_pools) - 1
+            Pool q = array.get(_pools, i)
+            if q.lvl == _lvl
+                idx := i
+                break
+    idx
+
+// "BIG ×2" / "MED 50x LIQ" — what kind of pool the TP actually is
+f_tag(_pools, _lvl) =>
+    string t = ""
+    idx = f_find(_pools, _lvl)
+    if idx >= 0
+        Pool p = array.get(_pools, idx)
+        t := f_sizeTxt(p.score) + (p.touches > 1 ? " ×" + str.tostring(p.touches) : "") + (p.isLiq ? " " + str.tostring(p.lev, "#") + "x LIQ" : "")
+    t
+
+f_mark(_pools, _lvl) =>
+    idx = f_find(_pools, _lvl)
+    if idx >= 0
+        Pool p = array.get(_pools, idx)
+        if not na(p.ln)
+            line.set_color(p.ln, colTarget)
+            line.set_style(p.ln, line.style_solid)
+            line.set_width(p.ln, 3)
+    idx
+
+// ─── 1) age the map ───
+sweptBuy  = f_sweep(buyPools,  true)
+sweptSell = f_sweep(sellPools, false)
+
+// ─── 2) register new peaks, and the liquidations they trapped ───
+volBoost = 1 + math.min(math.max(pvtVolR - 1, 0), 3) * 0.2
+liqThr   = f_thr(liqMinSize)
+
+if not na(ph)
+    scoreH = atr > 0 ? math.max(ph - legIntoHi, ph - legOutHi) / atr * volBoost : 0.0
+    f_add(buyPools, ph, scoreH, true, false, 0.0)
+    // shorts that sold this high blow up above it
+    if useLiqBands and scoreH >= liqThr and array.size(levs) > 0
+        for i = 0 to array.size(levs) - 1
+            L = array.get(levs, i)
+            f_add(buyPools, ph * (1 + 1 / L - mmrPct / 100), scoreH * liqWeight, true, true, L)
+
+if not na(pl)
+    scoreL = atr > 0 ? math.max(legIntoLo - pl, legOutLo - pl) / atr * volBoost : 0.0
+    f_add(sellPools, pl, scoreL, false, false, 0.0)
+    // longs that bought this low blow up below it
+    if useLiqBands and scoreL >= liqThr and array.size(levs) > 0
+        for i = 0 to array.size(levs) - 1
+            L = array.get(levs, i)
+            f_add(sellPools, pl * (1 - 1 / L + mmrPct / 100), scoreL * liqWeight, false, true, L)
+
+// ═══════════════════════ TRADE STATE ═══════════════════════
+var int   pos       = 0        // 1 long, -1 short, 0 flat
+var float entryP    = na
+var float slP       = na
+var float slInit    = na
+var float tp1P      = na
+var float tp2P      = na
+var bool  tp1Done   = false
+var bool  tp1IsLiq  = false
+var bool  tp2IsLiq  = false
+var int   entryBarIx= na
+var int   lastExitIx= -9999
+
+var int   nWin    = 0
+var int   nLoss   = 0
+var float sumR    = 0.0
+var int   nLiqHit = 0
+
+float  exitPx  = na
+string exitTag = ""
+
+// ═══════════════════════ EXITS (run before entries) ═══════════════════════
+if pos == 1
+    if low <= slP
+        exitPx  := math.min(slP, open)                 // a gap through fills at the open
+        exitTag := tp1Done and beAfterTp1 ? "BE STOP" : "SL"
+    else if not na(tp2P) and high >= tp2P
+        exitPx  := tp2P
+        exitTag := tp2IsLiq ? "TP2 · LIQ ✅" : "TP2 ✅"
+    else
+        if not tp1Done and high >= tp1P
+            tp1Done := true
+            if tp1IsLiq
+                nLiqHit += 1
+            if showLabels
+                label.new(bar_index, tp1P, "TP1 · LIQUIDITY TAKEN\n" + str.tostring(tp1P, format.mintick), style=label.style_label_down, color=color.new(color.teal, 15), textcolor=color.white, size=size.small)
+            alert("🎯 TP1 " + syminfo.ticker + " LONG @ " + str.tostring(tp1P, format.mintick), alert.freq_once_per_bar)
+            if exitOnTp1 or na(tp2P)
+                exitPx  := tp1P
+                exitTag := "TP · LIQ ✅"
+            else if beAfterTp1
+                slP := entryP
+        if na(exitPx) and bar_index > entryBarIx
+            if useRevExit and bearRev and (not revInProfit or close > entryP)
+                exitPx  := close
+                exitTag := "TP · REVERSAL"
+            else if maxBars > 0 and bar_index - entryBarIx >= maxBars
+                exitPx  := close
+                exitTag := "TIME"
+
+if pos == -1
+    if high >= slP
+        exitPx  := math.max(slP, open)
+        exitTag := tp1Done and beAfterTp1 ? "BE STOP" : "SL"
+    else if not na(tp2P) and low <= tp2P
+        exitPx  := tp2P
+        exitTag := tp2IsLiq ? "TP2 · LIQ ✅" : "TP2 ✅"
+    else
+        if not tp1Done and low <= tp1P
+            tp1Done := true
+            if tp1IsLiq
+                nLiqHit += 1
+            if showLabels
+                label.new(bar_index, tp1P, "TP1 · LIQUIDITY TAKEN\n" + str.tostring(tp1P, format.mintick), style=label.style_label_up, color=color.new(color.teal, 15), textcolor=color.white, size=size.small)
+            alert("🎯 TP1 " + syminfo.ticker + " SHORT @ " + str.tostring(tp1P, format.mintick), alert.freq_once_per_bar)
+            if exitOnTp1 or na(tp2P)
+                exitPx  := tp1P
+                exitTag := "TP · LIQ ✅"
+            else if beAfterTp1
+                slP := entryP
+        if na(exitPx) and bar_index > entryBarIx
+            if useRevExit and bullRev and (not revInProfit or close < entryP)
+                exitPx  := close
+                exitTag := "TP · REVERSAL"
+            else if maxBars > 0 and bar_index - entryBarIx >= maxBars
+                exitPx  := close
+                exitTag := "TIME"
+
+// ─── Book the closed trade ───
+if not na(exitPx)
+    rMult  = pos * (exitPx - entryP) / math.abs(entryP - slInit)
+    pnlPct = pos * (exitPx - entryP) / entryP * 100
+    if rMult >= 0
+        nWin += 1
+    else
+        nLoss += 1
+    sumR += rMult
+
+    if showLabels
+        label.new(bar_index, pos == 1 ? high : low, exitTag + "  " + str.tostring(exitPx, format.mintick) + "\n" + str.tostring(rMult, "#.##") + "R  (" + str.tostring(pnlPct, "#.##") + "%)", style = pos == 1 ? label.style_label_down : label.style_label_up, color = rMult >= 0 ? color.new(color.teal, 20) : color.new(color.maroon, 20), textcolor=color.white, size=size.small)
+
+    alert("EXIT " + (pos == 1 ? "LONG" : "SHORT") + " " + syminfo.ticker + " | " + exitTag + " @ " + str.tostring(exitPx, format.mintick) + " | " + str.tostring(rMult, "#.##") + "R", alert.freq_once_per_bar)
+
+    pos        := 0
+    tp1Done    := false
+    lastExitIx := bar_index
+
+// ═══════════════════════ ENTRIES ═══════════════════════
+canEnter = pos == 0 and na(exitPx) and bar_index - lastExitIx >= cooldown
+
+if canEnter and (longSig or shortSig)
+    dir = longSig ? 1 : -1
+    px  = close
+    md  = atr * minTpAtr
+
+    // --- STOP: beyond the first pool on the other side ---
+    float oppTarget = na
+    if dir == 1
+        oppTarget := f_target(sellPools, px, 0.0, false, 0, 0.0)
+    else
+        oppTarget := f_target(buyPools, px, 0.0, true, 0, 0.0)
+
+    float base = na
+    if slMode == "Liquidity"
+        base := na(oppTarget) ? (dir == 1 ? swingLo : swingHi) : oppTarget
+    else if slMode == "Swing"
+        base := dir == 1 ? swingLo : swingHi
+    else if slMode == "Prev candle"
+        base := dir == 1 ? low[1] : high[1]
+    else
+        base := dir == 1 ? px - atr * slAtrMult : px + atr * slAtrMult
+
+    stop = dir == 1 ? base - atr * slBuf : base + atr * slBuf
+    risk = math.max(math.abs(px - stop), atr * minRiskAtr)
+    stop := dir == 1 ? px - risk : px + risk
+
+    // --- TP: the nearest pool big enough to be worth aiming at ---
+    float thr = f_thr(tpMinSize)
+    float t1  = na
+    float t2  = na
+    if dir == 1
+        t1 := f_target(buyPools, px, md, true, 0, thr)
+        if na(t1) and tpFallback
+            thr := 0.0
+            t1  := f_target(buyPools, px, md, true, 0, 0.0)
+        t2 := f_target(buyPools, px, md, true, 1, thr)
+    else
+        t1 := f_target(sellPools, px, md, false, 0, thr)
+        if na(t1) and tpFallback
+            thr := 0.0
+            t1  := f_target(sellPools, px, md, false, 0, 0.0)
+        t2 := f_target(sellPools, px, md, false, 1, thr)
+
+    fb1 = px + dir * risk * rrFb1
+    fb2 = px + dir * risk * rrFb2
+
+    float target1 = na(t1) ? fb1 : t1
+    float target2 = na
+    if not na(t2)
+        target2 := t2
+    else if dir == 1
+        target2 := fb2 > target1 ? fb2 : na
+    else
+        target2 := fb2 < target1 ? fb2 : na
+
+    rr = math.abs(target1 - px) / risk
+    if minRR <= 0 or rr >= minRR
+        pos        := dir
+        entryP     := px
+        slP        := stop
+        slInit     := stop
+        tp1P       := target1
+        tp2P       := target2
+        tp1IsLiq   := not na(t1)
+        tp2IsLiq   := not na(t2)
+        tp1Done    := false
+        entryBarIx := bar_index
+
+        string tag1 = ""
+        string tag2 = ""
+        if dir == 1
+            tag1 := f_tag(buyPools, t1)
+            tag2 := f_tag(buyPools, t2)
+            f_mark(buyPools, t1)
+        else
+            tag1 := f_tag(sellPools, t1)
+            tag2 := f_tag(sellPools, t2)
+            f_mark(sellPools, t1)
+
+        tp1Txt = str.tostring(tp1P, format.mintick) + (tp1IsLiq ? "  " + tag1 : "  (" + str.tostring(rrFb1, "#.#") + "R)")
+        tp2Txt = na(tp2P) ? "—" : str.tostring(tp2P, format.mintick) + (tp2IsLiq ? "  " + tag2 : "")
+
+        if showLabels
+            label.new(bar_index, dir == 1 ? low : high, (dir == 1 ? "LONG" : "SHORT") + (volSpike ? " ✅" : "") + "  " + str.tostring(entryP, format.mintick) + "\nTP1 " + tp1Txt + "\nTP2 " + tp2Txt + "\nSL  " + str.tostring(slP, format.mintick) + "   " + str.tostring(rr, "#.##") + "R", style = dir == 1 ? label.style_label_up : label.style_label_down, color = dir == 1 ? color.new(color.green, 15) : color.new(color.red, 15), textcolor=color.white, size=size.small)
+
+        alert((dir == 1 ? "🚀 LONG " : "🔻 SHORT ") + syminfo.ticker + " " + timeframe.period + " @ " + str.tostring(entryP, format.mintick) + " | TP1 " + tp1Txt + " | TP2 " + tp2Txt + " | SL " + str.tostring(slP, format.mintick), alert.freq_once_per_bar)
+
+// ═══════════════════════ PLOTS ═══════════════════════
+plot(emaFast, "Fast EMA", color.new(color.green, 0), 2)
+plot(emaSlow, "Slow EMA", color.new(color.red, 0),   2)
+
+plot(pos != 0 ? entryP : na, "Entry", color.new(color.gray, 20),  1, plot.style_linebr)
+plot(pos != 0 ? tp1P   : na, "TP1",   color.new(color.teal, 0),   2, plot.style_linebr)
+plot(pos != 0 and not na(tp2P) ? tp2P : na, "TP2", color.new(color.teal, 45), 1, plot.style_linebr)
+plot(pos != 0 ? slP    : na, "SL",    color.new(color.red, 0),    1, plot.style_linebr)
+
+plotshape(showRaw and longBase,  "Raw long",  shape.triangleup,   location.belowbar, color.new(color.green, 45), size=size.tiny)
+plotshape(showRaw and shortBase, "Raw short", shape.triangledown, location.abovebar, color.new(color.red, 45),   size=size.tiny)
+plotshape(volSpike, "Volume Spike", shape.circle, location.bottom, color=color.purple, size=size.tiny)
+
+// a pool being taken — the turn the whole idea rests on
+plotshape(not na(sweptBuy),  "Buy-side taken",  shape.xcross, location.abovebar, color.new(color.orange, 30), size=size.tiny)
+plotshape(not na(sweptSell), "Sell-side taken", shape.xcross, location.belowbar, color.new(color.orange, 30), size=size.tiny)
+
+// ═══════════════════════ NEXT BIG POOL EITHER SIDE ═══════════════════════
+var label lbBuy  = na
+var label lbSell = na
+if barstate.islast
+    label.delete(lbBuy)
+    label.delete(lbSell)
+    if showNext
+        thrN = f_thr(tpMinSize)
+        nb = f_target(buyPools,  close, atr * minTpAtr, true,  0, thrN)
+        ns = f_target(sellPools, close, atr * minTpAtr, false, 0, thrN)
+        if na(nb) and tpFallback
+            nb := f_target(buyPools, close, atr * minTpAtr, true, 0, 0.0)
+        if na(ns) and tpFallback
+            ns := f_target(sellPools, close, atr * minTpAtr, false, 0, 0.0)
+        if not na(nb)
+            lbBuy := label.new(bar_index + 3, nb, "LONG TP  " + str.tostring(nb, format.mintick) + "  " + f_tag(buyPools, nb) + "   (+" + str.tostring((nb - close) / close * 100, "#.##") + "%)", style=label.style_label_left, color=color.new(color.teal, 25), textcolor=color.white, size=size.small)
+        if not na(ns)
+            lbSell := label.new(bar_index + 3, ns, "SHORT TP  " + str.tostring(ns, format.mintick) + "  " + f_tag(sellPools, ns) + "   (-" + str.tostring((close - ns) / close * 100, "#.##") + "%)", style=label.style_label_left, color=color.new(color.maroon, 25), textcolor=color.white, size=size.small)
+
+// ═══════════════════════ STATS ═══════════════════════
+var table st = table.new(position.top_right, 2, 6, border_width=1)
+if showStats and barstate.islast
+    tot = nWin + nLoss
+    wr  = tot > 0 ? 100.0 * nWin / tot : 0.0
+    table.cell(st, 0, 0, "FI TEST1",       text_color=color.white, bgcolor=color.new(color.blue, 20), text_size=size.small)
+    table.cell(st, 1, 0, timeframe.period, text_color=color.white, bgcolor=color.new(color.blue, 20), text_size=size.small)
+    table.cell(st, 0, 1, "Trades", text_color=color.gray, text_size=size.small)
+    table.cell(st, 1, 1, str.tostring(tot), text_color=color.white, text_size=size.small)
+    table.cell(st, 0, 2, "Win rate", text_color=color.gray, text_size=size.small)
+    table.cell(st, 1, 2, str.tostring(wr, "#.#") + "%", text_color = wr >= 50 ? color.lime : color.red, text_size=size.small)
+    table.cell(st, 0, 3, "Total R", text_color=color.gray, text_size=size.small)
+    table.cell(st, 1, 3, str.tostring(sumR, "#.##"), text_color = sumR >= 0 ? color.lime : color.red, text_size=size.small)
+    table.cell(st, 0, 4, "Pools hit", text_color=color.gray, text_size=size.small)
+    table.cell(st, 1, 4, str.tostring(nLiqHit), text_color=color.white, text_size=size.small)
+    table.cell(st, 0, 5, "Live pools", text_color=color.gray, text_size=size.small)
+    table.cell(st, 1, 5, str.tostring(array.size(buyPools)) + " ▲ / " + str.tostring(array.size(sellPools)) + " ▼", text_color=color.white, text_size=size.small)
+
+// ═══════════════════════ ALERTS ═══════════════════════
+alertcondition(longSig,  "Long",  "FI T1: LONG 🚀 @{{close}} — aiming at the pool above")
+alertcondition(shortSig, "Short", "FI T1: SHORT 🔻 @{{close}} — aiming at the pool below")
+alertcondition(not na(sweptBuy),  "Buy-side liquidity taken",  "FI T1: buy-side liquidity taken @{{close}} — watch for the turn")
+alertcondition(not na(sweptSell), "Sell-side liquidity taken", "FI T1: sell-side liquidity taken @{{close}} — watch for the turn")

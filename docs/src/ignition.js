@@ -15,6 +15,7 @@
 // a listing or a rug. The edge is being on the first candle either way.
 
 import { atr as atrSeries, sma } from './indicators.js';
+import { SPOT_MIRROR, isGeoBlocked, mexcAllTickers } from './geofeed.js';
 
 export const DEFAULTS = {
   coilBars:   24,     // the coil window — 2h on 5m
@@ -235,20 +236,33 @@ async function mapLimit(items, limit, fn) {
   return out;
 }
 
+async function binanceTickers(base) {
+  const res = await fetch(`${base}/ticker/24hr`, { signal: AbortSignal.timeout(25000) });
+  if (!res.ok) throw new Error(`${res.status} ticker/24hr`);
+  return (await res.json()).map(t => ({
+    symbol: t.symbol,
+    price: +t.lastPrice,
+    changePct: +t.priceChangePercent,
+    quoteVol: +t.quoteVolume
+  }));
+}
+
 // One ticker call gives the whole universe and its 24h volume — the only
 // bulk request in the scan. Everything after it is one klines call per symbol.
+//
+// It needs the same geo fallback the candle feed has. Binance answers 451 to
+// every US datacentre, which is exactly where the scheduled scanner runs, so
+// without this the whole sweep dies on its first request there.
 export async function universe(market = 'futures', minQuoteVol = 3e6) {
-  const res = await fetch(`${BASE[market]}/ticker/24hr`, { signal: AbortSignal.timeout(25000) });
-  if (!res.ok) throw new Error(`${res.status} ticker/24hr`);
-  const rows = await res.json();
+  let rows;
+  try {
+    rows = await binanceTickers(BASE[market]);
+  } catch (e) {
+    if (!isGeoBlocked(e)) throw e;
+    rows = market === 'futures' ? await mexcAllTickers() : await binanceTickers(SPOT_MIRROR);
+  }
   return rows
     .filter(t => t.symbol.endsWith('USDT') && !LEVERAGED.test(t.symbol))
-    .map(t => ({
-      symbol: t.symbol,
-      price: +t.lastPrice,
-      changePct: +t.priceChangePercent,
-      quoteVol: +t.quoteVolume
-    }))
     .filter(r => isFinite(r.quoteVol) && r.quoteVol >= minQuoteVol);
 }
 
