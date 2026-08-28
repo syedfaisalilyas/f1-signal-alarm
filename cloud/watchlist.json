@@ -47,7 +47,8 @@
       "market": "futures",
       "interval": "1h",
       "minQuoteVol": 3000000,
-      "fresh": 2
+      "fresh": 2,
+      "alertOn": "longs"
     }
   }
 }

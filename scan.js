@@ -141,15 +141,17 @@ if (ig.enabled !== false && !settings.muted) {
     // buy the top.
     const freshMax = ig.fresh ?? 2;
     let sent = 0;
-    // Grade A is the setup that survived a time-split test: a quiet coin below
-    // its 30-day high, flat or down on the week, low volatility, while BTC is
-    // rising. On held-out data it won 50% against the unfiltered 24%. It is
-    // also rare — expect a couple a week, not a couple a day. Everything else
-    // still shows on the board; this only decides what is worth waking up for.
-    const gradeOnly = ig.longsOnly !== false;
+    // What is worth waking up for. Longs only by default: over three months of
+    // 391 shorts, not one produced a move above +50%, and the whole setup lives
+    // on that tail. Grade A is stricter still — a quiet coin below its 30-day
+    // high while BTC rises, which won 50% on held-out data against 24% — but it
+    // fires perhaps twice a week, and the user wants every long.
+    //   'longs' (default) every long · 'A' only grade A · 'all' shorts too
+    const alertOn = ig.alertOn || 'longs';
     for (const r of sweep.igniting) {
       if (r.fired.barsAgo > freshMax) continue;
-      if (gradeOnly && r.fired.grade !== 'A') continue;
+      if (alertOn === 'A' && r.fired.grade !== 'A') continue;
+      if (alertOn === 'longs' && r.fired.side !== 'LONG') continue;
       const key = `${r.symbol}:${sweep.interval}`;
       if (state.ignited[key] === r.fired.barTime) continue;
       state.ignited[key] = r.fired.barTime;
