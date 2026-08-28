@@ -37,6 +37,10 @@ export const DEFAULTS = {
   trailGive:  0.25    // once running, exit this far back from the best price
 };
 
+const TF_MS = { '1m': 60000, '3m': 180000, '5m': 300000, '15m': 900000, '30m': 1800000, '1h': 3600000, '4h': 14400000 };
+// Bars fetched before the window opens so the indicators are warm at its edge.
+const WARMUP = 300;
+
 const mean = a => a.length ? a.reduce((s, v) => s + v, 0) / a.length : 0;
 const clamp = (v, lo, hi) => Math.min(hi, Math.max(lo, v));
 // The rolling measurements every read shares: how tight the box is at each
@@ -309,6 +313,58 @@ export function simulateTrail(bars, ev, cfg = {}) {
            pnlPct: fav(last.c), peakPct: mfe, dipPct: mae, bars: bars.length - 1 - i };
 }
 
+// A deeper look back than the live sweep holds.
+//
+// The sweep's 500 bars are one request per coin and cover about twenty days of
+// 1h. Going back a year needs six pages per coin, so this is a separate,
+// bounded pass: fewer coins, chosen by volume, fetched deep. Keeping it apart
+// means asking for a year of history never slows down the question the sweep
+// exists to answer — what is igniting right now.
+export async function scanHistory({
+  market = 'futures',
+  interval = '1h',
+  days = 30,
+  coins = 80,
+  minQuoteVol = 3e6,
+  concurrency = 6,
+  cfg = {},
+  fetchCandlesDeep
+} = {}) {
+  if (typeof fetchCandlesDeep !== 'function') throw new Error('scanHistory needs fetchCandlesDeep');
+  const ms = TF_MS[interval] || 3600000;
+  const bars = Math.min(9000, Math.max(500, Math.ceil(days * 86400000 / ms) + WARMUP));
+  const from = Date.now() - days * 86400000;
+
+  const list = (await universe(market, minQuoteVol))
+    .sort((a, b) => b.quoteVol - a.quoteVol).slice(0, coins);
+
+  const per = await mapLimit(list, concurrency, async (row) => {
+    const candles = await fetchCandlesDeep(market, row.symbol, interval, bars);
+    if (candles.length < 200) return null;
+    const lev = maxLev(market, row.symbol) || 1;
+    return ignitionEvents(candles, cfg).map(ev => {
+      const o = simulateTrail(candles, ev, cfg);
+      if (!o || o.entryTime < from) return null;
+      const dead = o.dipPct >= 100 / lev;
+      return {
+        symbol: row.symbol, market, interval, side: ev.side, maxLev: lev,
+        coilPct: ev.boxWidthPct, volX: ev.volX, ...o,
+        atMaxLev: dead ? -100 : o.pnlPct * lev,
+        peakAtMaxLev: dead ? -100 : o.peakPct * lev,
+        liquidated: dead
+      };
+    }).filter(Boolean);
+  });
+
+  const rows = per.filter(Boolean).flat();
+  return {
+    at: Date.now(), market, interval, days, bars,
+    coins: per.filter(Boolean).length, asked: list.length,
+    reach: rows.length ? Math.min(...rows.map(r => r.entryTime)) : null,
+    rows: rows.sort((a, b) => b.atMaxLev - a.atMaxLev)
+  };
+}
+
 // ─────────────────────────── market-wide scan ───────────────────────────
 
 const BASE = { spot: 'https://api.binance.com/api/v3', futures: 'https://fapi.binance.com/fapi/v1' };
@@ -408,11 +464,26 @@ export async function scanUniverse({
 // A whole-market sweep is ~300 klines calls, so the API layers share one
 // cached runner rather than re-scanning for every page that asks.
 export class IgnitionScanner {
-  constructor(fetchCandles, getCfg = () => ({})) {
+  constructor(fetchCandles, getCfg = () => ({}), fetchDeep = fetchCandles) {
     this.fetchCandles = fetchCandles;
+    this.fetchDeep = fetchDeep;
     this.getCfg = getCfg;
     this.cache = null;
     this.inflight = null;
+  }
+
+  async history({ market = 'futures', interval = '1h', days = 30, coins = 80, minQuoteVol = 3e6, ttl = 900000 } = {}) {
+    const key = `${market}:${interval}:${days}:${coins}:${minQuoteVol}`;
+    this.hcache ||= null;
+    if (this.hcache && Date.now() - this.hcache.at < ttl && this.hcache.key === key) return this.hcache;
+    this.hflight ||= null;
+    if (this.hflight) return this.hflight;
+    this.hflight = scanHistory({
+      market, interval, days, coins, minQuoteVol, cfg: this.getCfg(),
+      fetchCandlesDeep: this.fetchDeep
+    }).then(d => (this.hcache = { ...d, key }))
+      .finally(() => { this.hflight = null; });
+    return this.hflight;
   }
 
   async run({ market = 'futures', interval = '5m', minQuoteVol = 3e6, ttl = 90000 } = {}) {

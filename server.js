@@ -42,7 +42,7 @@ initPush();
 const feed = new Feed(() => store.get().settings.cfg || {});
 const vol = new VolatilityScanner();
 const screener = new Screener(vol, () => store.get().settings.cfg || {});
-const igniter = new IgnitionScanner(fetchCandles, () => store.get().settings.ignition || {});
+const igniter = new IgnitionScanner(fetchCandles, () => store.get().settings.ignition || {}, fetchCandlesDeep);
 
 // ─────────────── browser fan-out ───────────────
 function broadcast(type, payload) {
@@ -321,6 +321,22 @@ app.get('/api/ignition', async (req, res) => {
       coiling: d.coiling.slice(0, 20).map(tag),
       history: d.history.slice(0, 25)
     });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// Deeper than the live sweep reaches — a bounded pass over the most liquid
+// names so a year of history never slows down "what is igniting now".
+app.get('/api/ignition/history', async (req, res) => {
+  try {
+    const d = await igniter.history({
+      market: req.query.market === 'spot' ? 'spot' : 'futures',
+      interval: ['5m', '15m', '1h', '4h'].includes(req.query.interval) ? req.query.interval : '1h',
+      days: Math.min(365, Math.max(1, Number(req.query.days) || 30)),
+      coins: Math.min(150, Math.max(10, Number(req.query.coins) || 80)),
+      minQuoteVol: Math.max(1e5, Number(req.query.minVol) || 3e6)
+    });
+    res.json({ at: d.at, interval: d.interval, days: d.days, coins: d.coins,
+      asked: d.asked, reach: d.reach, rows: d.rows.slice(0, 300) });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 

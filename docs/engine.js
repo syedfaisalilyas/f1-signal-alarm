@@ -38,7 +38,7 @@ const save = () => { try { localStorage.setItem(KEY, JSON.stringify(state)); } c
 const feed = new Feed(() => state.settings.cfg || {});
 const vol = new VolatilityScanner();
 const screener = new Screener(vol, () => state.settings.cfg || {});
-const igniter = new IgnitionScanner(fetchCandles, () => state.settings.ignition || {});
+const igniter = new IgnitionScanner(fetchCandles, () => state.settings.ignition || {}, fetchCandlesDeep);
 
 setOverrides(state.settings.levOverride || {});
 
@@ -266,6 +266,18 @@ async function route(path, params, method, body) {
       scanned: d.scanned, qualified: d.qualified, profitable: d.profitable,
       rows: d.rows.slice(0, 40).map(tag), bestPerCoin: d.bestPerCoin.slice(0, 20).map(tag)
     });
+  }
+
+  if (path === '/api/ignition/history') {
+    const d = await igniter.history({
+      market: params.get('market') === 'spot' ? 'spot' : 'futures',
+      interval: ['5m', '15m', '1h', '4h'].includes(params.get('interval')) ? params.get('interval') : '1h',
+      days: Math.min(365, Math.max(1, Number(params.get('days')) || 30)),
+      coins: Math.min(150, Math.max(10, Number(params.get('coins')) || 80)),
+      minQuoteVol: Math.max(1e5, Number(params.get('minVol')) || 3e6)
+    });
+    return json({ at: d.at, interval: d.interval, days: d.days, coins: d.coins,
+      asked: d.asked, reach: d.reach, rows: d.rows.slice(0, 300) });
   }
 
   if (path === '/api/ignition') {

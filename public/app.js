@@ -589,15 +589,73 @@ function renderCoil(d) {
   }
 }
 
-// The track record: what this same setup already caught on these same coins,
-// scored by the trailing exit rather than the fixed target it used to use.
-// The candles came back with the scan, so this costs nothing extra to show.
+// The track record: what this same setup already caught, scored by the trailing
+// exit rather than the fixed target it used to use.
+//
+// Two sources. The scan window costs nothing — those candles arrived with the
+// sweep. Anything longer is a separate deeper pass over fewer coins, so asking
+// for a year never slows down "what is igniting now".
+let pastRows = [], pastFrom = 'the scan window';
+
+$('#pastRange').onchange = loadPast;
+$('#pastSort').onchange = drawPast;
+$('#pastQ').oninput = drawPast;
+
 function renderCoilPast(d) {
+  if (Number($('#pastRange').value)) return;   // a deeper range is on screen
+  pastRows = d.history || [];
+  pastFrom = 'the scan window';
+  drawPast();
+}
+
+async function loadPast() {
+  const days = Number($('#pastRange').value) || 0;
+  if (!days) { pastRows = lastCoil?.history || []; pastFrom = 'the scan window'; drawPast(); return; }
+
+  let secs = 0;
+  const label = () => $('#pastMeta').textContent =
+    `reading ${days} days of history… ${secs}s (deeper candles, top coins by volume)`;
+  label();
+  const tick = setInterval(() => { secs++; label(); }, 1000);
+  $('#coilPast').innerHTML = '';
+  try {
+    const d = await apiJson(`/api/ignition/history?interval=${$('#coilTf').value}`
+      + `&days=${days}&minVol=${$('#coilVol').value}`);
+    if (d.error) throw new Error(d.error);
+    pastRows = d.rows;
+    pastFrom = `${d.days} days · top ${d.coins} coins by volume`;
+    drawPast();
+  } catch (e) {
+    $('#pastMeta').innerHTML = `<span class="warn">could not read history after ${secs}s — ${e.message}</span>`;
+  } finally { clearInterval(tick); }
+}
+
+const PAST_SORT = {
+  pnl:  (a, b) => b.atMaxLev - a.atMaxLev,
+  new:  (a, b) => b.entryTime - a.entryTime,
+  old:  (a, b) => a.entryTime - b.entryTime,
+  move: (a, b) => b.peakPct - a.peakPct,
+  coil: (a, b) => (a.coilPct ?? 99) - (b.coilPct ?? 99)
+};
+
+function drawPast() {
   const box = $('#coilPast');
   box.innerHTML = '';
-  const past = (d.history || []).filter(h => h.atMaxLev > 0);
+  const q = $('#pastQ').value.trim().toUpperCase();
+  const past = pastRows
+    .filter(h => h.atMaxLev > 0)
+    .filter(h => !q || h.symbol.includes(q))
+    .sort(PAST_SORT[$('#pastSort').value] || PAST_SORT.pnl);
+
+  $('#pastMeta').innerHTML = pastRows.length
+    ? `<b>${past.length}</b> profitable ignition${past.length === 1 ? '' : 's'} from ${pastFrom}` +
+      (q ? ` · matching “${q}”` : '') +
+      ` · biggest +${Math.round(Math.max(0, ...past.map(h => h.atMaxLev))).toLocaleString()}% at MEXC max`
+    : '';
+
   if (!past.length) {
-    box.innerHTML = '<div class="hempty">No completed ignitions in this window yet.</div>';
+    box.innerHTML = `<div class="hempty">${q ? `No ignitions for “${q}” in this range.`
+      : 'No completed ignitions in this window yet.'}</div>`;
     return;
   }
   const when = t => new Date(t).toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
