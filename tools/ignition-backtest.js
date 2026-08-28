@@ -16,6 +16,8 @@
 //     decides the leverage you can survive.
 
 import '../src/env.js';
+import fs from 'fs';
+import path from 'path';
 import { fetchCandlesDeep } from '../src/providers.js';
 import { ignitionEvents, universe, DEFAULTS } from '../src/ignition.js';
 
@@ -95,9 +97,24 @@ function outcome(bars, ev, horizon) {
 
 // One ticker call for the whole comparison — asking per timeframe just earns
 // a 429 and kills the run.
+// ticker/24hr is the heaviest call Binance offers and the first one it bans
+// you from. Cache the board so a re-run after a ban costs nothing.
+const CACHE = new URL('../data/universe-cache.json', import.meta.url).pathname;
 let UNIVERSE = null;
 async function board() {
-  if (!UNIVERSE) UNIVERSE = (await universe('futures', minVol)).sort((a, b) => b.quoteVol - a.quoteVol).slice(0, coins);
+  if (UNIVERSE) return UNIVERSE;
+  try {
+    const rows = (await universe('futures', minVol)).sort((a, b) => b.quoteVol - a.quoteVol);
+    fs.mkdirSync(path.dirname(CACHE), { recursive: true });
+    fs.writeFileSync(CACHE, JSON.stringify({ at: Date.now(), minVol, rows }));
+    UNIVERSE = rows.slice(0, coins);
+  } catch (e) {
+    if (!fs.existsSync(CACHE)) throw e;
+    const c = JSON.parse(fs.readFileSync(CACHE, 'utf8'));
+    process.stderr.write(`[board] ${e.message} — using cached board from ` +
+      `${new Date(c.at).toISOString().slice(0, 16)}\n`);
+    UNIVERSE = c.rows.filter(r => r.quoteVol >= minVol).slice(0, coins);
+  }
   return UNIVERSE;
 }
 

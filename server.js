@@ -307,7 +307,7 @@ app.get('/api/ignition', async (req, res) => {
   try {
     const d = await igniter.run({
       market: req.query.market === 'spot' ? 'spot' : 'futures',
-      interval: ['1m', '3m', '5m', '15m'].includes(req.query.interval) ? req.query.interval : '5m',
+      interval: ['1m', '3m', '5m', '15m', '1h'].includes(req.query.interval) ? req.query.interval : '1h',
       minQuoteVol: Math.max(1e5, Number(req.query.minVol) || 3e6)
     });
     const fresh = Math.max(1, Number(req.query.fresh) || 3);

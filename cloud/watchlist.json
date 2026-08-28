@@ -45,7 +45,7 @@
     "ignition": {
       "enabled": true,
       "market": "futures",
-      "interval": "5m",
+      "interval": "1h",
       "minQuoteVol": 3000000,
       "fresh": 2
     }

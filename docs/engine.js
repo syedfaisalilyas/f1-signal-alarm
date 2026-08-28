@@ -271,7 +271,7 @@ async function route(path, params, method, body) {
   if (path === '/api/ignition') {
     const d = await igniter.run({
       market: params.get('market') === 'spot' ? 'spot' : 'futures',
-      interval: ['1m', '3m', '5m', '15m'].includes(params.get('interval')) ? params.get('interval') : '5m',
+      interval: ['1m', '3m', '5m', '15m', '1h'].includes(params.get('interval')) ? params.get('interval') : '1h',
       minQuoteVol: Math.max(1e5, Number(params.get('minVol')) || 3e6)
     });
     const fresh = Math.max(1, Number(params.get('fresh')) || 3);
