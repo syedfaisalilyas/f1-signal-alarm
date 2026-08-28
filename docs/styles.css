@@ -352,8 +352,12 @@ main{max-width:1400px;margin:0 auto;padding:0 16px}
 /* Track record rows: the payoff is the headline, so it sits where the
    percentage sits everywhere else in this app. */
 .coilrow.past{opacity:.94}
-.coilrow.past .pnl{margin-left:auto;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;
-  font-weight:700;font-size:15px;color:var(--warn)}
+.coilrow.past .pnl{margin-left:auto;text-align:right;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;
+  font-weight:700;font-size:15px;color:var(--warn);line-height:1.25}
+/* The ceiling the trail was working against, so the headline number can be
+   judged rather than just admired. */
+.coilrow.past .pnl em{display:block;font-style:normal;font-size:9.5px;font-weight:500;
+  color:var(--faint);letter-spacing:.01em}
 .coilrow.past .age{margin-left:0}
 .coilrow.past .plan{font-size:10.5px}
 .coilrow.past .plan b{font-weight:600}

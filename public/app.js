@@ -724,7 +724,9 @@ function drawPast() {
         <span class="iv">${h.interval}</span>
         <span class="side ${up ? 'up' : 'down'}">${up ? '🚀' : '🔻'} ${h.side}</span>
         ${h.open ? '<span class="age hot">still running</span>' : '<span class="age">trailed out</span>'}
-        <span class="pnl">+${Math.round(h.atMaxLev).toLocaleString()}%</span>
+        <span class="pnl">+${Math.round(h.atMaxLev).toLocaleString()}%<em>of a +${Math.round(
+          h.peakAtMaxLev ?? h.peakPct * h.maxLev).toLocaleString()}% peak · kept ${(
+          h.pnlPct / h.peakPct * 100).toFixed(0)}%</em></span>
       </div>
       <div class="b2">
         <span>moved <b>+${h.peakPct.toFixed(1)}%</b></span>
