@@ -597,21 +597,45 @@ function renderCoil(d) {
 // for a year never slows down "what is igniting now".
 let pastRows = [], pastFrom = 'the scan window';
 
-$('#pastRange').onchange = loadPast;
+// Sort and coin search are free — they reorder what is already loaded, so they
+// apply the instant you touch them. Look-back is not free: a longer range is a
+// fresh deep read that takes the better part of a minute, and on a phone the
+// picker fires a change for every option you scroll past. So that one waits for
+// the button, which says what it is about to fetch.
 $('#pastSort').onchange = drawPast;
 $('#pastQ').oninput = drawPast;
+$('#pastRange').onchange = markPastPending;
+$('#pastLoad').onclick = loadPast;
+
+const RANGE_LABEL = { 0: 'the scan window', 30: 'last 30 days', 90: 'last 3 months',
+                      180: 'last 6 months', 365: 'last year' };
+
+function markPastPending() {
+  const days = Number($('#pastRange').value) || 0;
+  const btn = $('#pastLoad');
+  btn.textContent = days ? `Load ${RANGE_LABEL[days]}` : 'Show scan window';
+  btn.classList.toggle('pending', RANGE_LABEL[days] !== pastFrom);
+}
 
 function renderCoilPast(d) {
   if (Number($('#pastRange').value)) return;   // a deeper range is on screen
   pastRows = d.history || [];
   pastFrom = 'the scan window';
   drawPast();
+  markPastPending();
 }
 
 async function loadPast() {
   const days = Number($('#pastRange').value) || 0;
-  if (!days) { pastRows = lastCoil?.history || []; pastFrom = 'the scan window'; drawPast(); return; }
+  if (!days) {
+    pastRows = lastCoil?.history || [];
+    pastFrom = 'the scan window';
+    drawPast(); markPastPending(); return;
+  }
 
+  const btn = $('#pastLoad');
+  btn.disabled = true;
+  btn.textContent = 'Reading…';
   let secs = 0;
   const label = () => $('#pastMeta').textContent =
     `reading ${days} days of history… ${secs}s (deeper candles, top coins by volume)`;
@@ -627,7 +651,11 @@ async function loadPast() {
     drawPast();
   } catch (e) {
     $('#pastMeta').innerHTML = `<span class="warn">could not read history after ${secs}s — ${e.message}</span>`;
-  } finally { clearInterval(tick); }
+  } finally {
+    clearInterval(tick);
+    btn.disabled = false;
+    markPastPending();
+  }
 }
 
 const PAST_SORT = {

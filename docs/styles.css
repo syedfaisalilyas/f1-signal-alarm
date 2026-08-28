@@ -361,3 +361,8 @@ main{max-width:1400px;margin:0 auto;padding:0 16px}
 .histctl input[type="search"]{background:var(--panel2);border:1px solid var(--line);color:var(--fg);
   border-radius:8px;padding:5px 9px;font:inherit;font-size:12.5px;width:110px}
 .histctl input[type="search"]::placeholder{color:var(--faint)}
+
+/* The look-back button glows only while the picker is ahead of what is loaded,
+   so it reads as "there is something to fetch" rather than as decoration. */
+#pastLoad.pending{color:var(--warn);border-color:rgba(255,176,46,.45);background:rgba(255,176,46,.08)}
+#pastLoad:disabled{opacity:.55;cursor:default}
