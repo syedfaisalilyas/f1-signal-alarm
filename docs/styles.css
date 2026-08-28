@@ -365,4 +365,6 @@ main{max-width:1400px;margin:0 auto;padding:0 16px}
 /* The look-back button glows only while the picker is ahead of what is loaded,
    so it reads as "there is something to fetch" rather than as decoration. */
 #pastApply.pending{color:var(--warn);border-color:rgba(255,176,46,.45);background:rgba(255,176,46,.08)}
-#pastApply:disabled{opacity:.55;cursor:default}
+#pastApply.done{color:var(--up);border-color:rgba(38,208,124,.5);background:rgba(38,208,124,.12)}
+
+.stamp2{color:var(--faint);font-size:10px;letter-spacing:.03em}

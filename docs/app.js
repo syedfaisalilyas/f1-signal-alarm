@@ -467,6 +467,11 @@ function renderBest(d) {
 }
 
 // ─────────── coil → ignition ───────────
+// Which build is on screen. Pages caches for ten minutes and a phone can hold
+// it longer, so "is the fix live yet" was being answered by guesswork on both
+// sides of the conversation. Now the page says.
+$('#buildStamp').textContent = window.__BUILD ? `· build ${window.__BUILD}` : '· dev';
+
 $('#coilBtn').onclick = () => { $('#coilModal').classList.remove('hidden'); loadCoil(); };
 $('#coilClose').onclick = () => $('#coilModal').classList.add('hidden');
 $('#coilModal').onclick = e => { if (e.target.id === 'coilModal') $('#coilModal').classList.add('hidden'); };
@@ -622,11 +627,11 @@ const controls = () => ({
 function markPastPending() {
   const c = controls(), btn = $('#pastApply');
   const dirty = c.days !== applied.days || c.sort !== applied.sort || c.q !== applied.q;
+  // Never disabled. A greyed-out Apply is indistinguishable from a broken one
+  // on a phone — you tap it, nothing happens, and the control has lied to you.
+  // Re-applying an unchanged filter is harmless, so let it always work.
   btn.classList.toggle('pending', dirty);
-  btn.disabled = !dirty;
-  btn.textContent = !dirty ? 'Filters applied'
-    : c.days !== applied.days ? `Apply — read ${RANGE_LABEL[c.days]}`
-    : 'Apply filters';
+  btn.textContent = c.days !== applied.days ? `Apply — read ${RANGE_LABEL[c.days]}` : 'Apply filters';
 }
 
 async function applyPast() {
@@ -636,6 +641,12 @@ async function applyPast() {
   applied = c;
   drawPast();
   markPastPending();
+  // Say so out loud. A sort that reorders rows below the fold looks identical
+  // to a button that did nothing, which is how this ends up reported as broken.
+  const btn = $('#pastApply');
+  btn.classList.add('done');
+  setTimeout(() => btn.classList.remove('done'), 900);
+  $('#coilPast').scrollIntoView({ block: 'nearest', behavior: 'smooth' });
 }
 
 function renderCoilPast(d) {
@@ -655,7 +666,6 @@ async function loadPast() {
   }
 
   const btn = $('#pastApply');
-  btn.disabled = true;
   btn.textContent = 'Reading…';
   let secs = 0;
   const label = () => $('#pastMeta').textContent =
@@ -674,7 +684,6 @@ async function loadPast() {
     $('#pastMeta').innerHTML = `<span class="warn">could not read history after ${secs}s — ${e.message}</span>`;
   } finally {
     clearInterval(tick);
-    btn.disabled = false;
   }
 }
 

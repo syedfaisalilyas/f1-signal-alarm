@@ -40,8 +40,10 @@ const appPath = path.join(out, 'app.js');
 fs.writeFileSync(appPath, fs.readFileSync(appPath, 'utf8').replaceAll("register('/sw.js')", "register('sw.js')"));
 
 // index.html: same markup, plus the bootstrap the page needs before app.js runs.
+const stamp = new Date().toISOString().slice(5, 16).replace('T', ' ') + 'Z';
 const head = `
 <link rel="icon" href="icon.png">
+<script>window.__BUILD = ${JSON.stringify(stamp)};</script>
 <script>
   // Modules written for Node read process.env; the app socket needs the real
   // WebSocket kept aside before engine.js replaces the global.
