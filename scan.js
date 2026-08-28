@@ -164,6 +164,7 @@ if (ig.enabled !== false && !settings.muted) {
         `Entry ${n(f.entry)}\n` +
         `Stop  ${n(f.stop)}   (${f.riskPct.toFixed(2)}%)\n` +
         `Then trail ${((f.trailGive ?? 0.25) * 100).toFixed(0)}% below the high — do not sell at a fixed target.\n` +
+        `Size at ${f.useLev || 25}x (not ${f.maxLev || '?'}x max — that drew down 110% in the backtest).\n` +
         `Setup: ${f.gradeWhy || 'grade ' + (f.grade || '?')}\n` +
         `(ref TP1 ${n(f.tp1)} · TP2 ${n(f.tp2)} · ${f.rr1.toFixed(1)}R)\n` +
         `24h volume $${(r.quoteVol / 1e6).toFixed(1)}M · ${r.changePct.toFixed(1)}% today`;

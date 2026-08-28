@@ -384,3 +384,9 @@ main{max-width:1400px;margin:0 auto;padding:0 16px}
 .coilrow .grade.gA{color:var(--up);border-color:rgba(38,208,124,.45);background:rgba(38,208,124,.1)}
 .coilrow .b3 .why{color:var(--faint);font-size:10px;text-align:right;max-width:62%}
 .coilrow .b3 .why.ok{color:var(--up)}
+
+/* What to actually trade it at. Max leverage went bust in the backtest, so the
+   number the row leads with is the one the account survived. */
+.plan .size{color:var(--info)}
+.plan .size b{color:var(--info)}
+.plan .size em{font-style:normal;color:var(--faint);font-size:10px;margin-left:5px}

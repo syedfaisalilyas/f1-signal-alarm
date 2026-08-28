@@ -550,6 +550,7 @@ function renderCoil(d) {
         <span>entry <b>${px(f.entry)}</b></span>
         <span>stop <b class="down">${px(f.stop)}</b> <em>${f.riskPct.toFixed(2)}%</em></span>
         <span class="trail">then trail <b>${((f.trailGive ?? 0.25) * 100).toFixed(0)}%</b> below the high</span>
+        ${f.useLev ? `<span class="size">at <b>${f.useLev}x</b><em>stop costs ${(f.riskPct * f.useLev).toFixed(0)}% of margin</em></span>` : ''}
         <span class="rr">${f.rr1.toFixed(1)}R</span>
       </div>
       <div class="plan refs">
@@ -728,14 +729,13 @@ function drawPast() {
         <span class="iv">${h.interval}</span>
         <span class="side ${up ? 'up' : 'down'}">${up ? '🚀' : '🔻'} ${h.side}</span>
         ${h.open ? '<span class="age hot">still running</span>' : '<span class="age">trailed out</span>'}
-        <span class="pnl">+${Math.round(h.atMaxLev).toLocaleString()}%<em>of a +${Math.round(
-          h.peakAtMaxLev ?? h.peakPct * h.maxLev).toLocaleString()}% peak · kept ${(
-          h.pnlPct / h.peakPct * 100).toFixed(0)}%</em></span>
+        <span class="pnl">${h.atUseLev != null ? '+' + Math.round(h.atUseLev).toLocaleString() : '+' + Math.round(h.atMaxLev).toLocaleString()}%<em>${
+          h.atUseLev != null ? `at ${h.useLev}x · +${Math.round(h.atMaxLev).toLocaleString()}% at ${h.maxLev}x max` : ''}</em></span>
       </div>
       <div class="b2">
         <span>moved <b>+${h.peakPct.toFixed(1)}%</b></span>
         <span>trail kept <b>+${h.pnlPct.toFixed(1)}%</b></span>
-        <span>at ${h.maxLev}x MEXC max</span>
+        <span>kept ${(h.pnlPct / h.peakPct * 100).toFixed(0)}% of the peak</span>
         <span>dipped ${h.dipPct.toFixed(2)}% first</span>
       </div>
       <div class="plan">

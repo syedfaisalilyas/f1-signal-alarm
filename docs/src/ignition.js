@@ -35,7 +35,8 @@ export const DEFAULTS = {
   squeezeMem: 36,     // how far back the base may be — 3h on 5m
   fireWindow: 2,      // a break is "fresh" for this many bars
   trailGive:  0.25,   // once running, exit this far back from the best price
-  maxCoilPct: 5.00    // a 'coil' wider than this is just a trading range
+  maxCoilPct: 5.00,   // a 'coil' wider than this is just a trading range
+  useLev:     25      // what to actually trade at — see the note on sizing
 };
 
 const TF_MS = { '1m': 60000, '3m': 180000, '5m': 300000, '15m': 900000, '30m': 1800000, '1h': 3600000, '4h': 14400000 };
@@ -324,6 +325,22 @@ export function simulateTrail(bars, ev, cfg = {}) {
            peakTime, peakPrice, pnlPct: fav(last.c), peakPct: mfe, dipPct: mae, bars: bars.length - 1 - i };
 }
 
+// What to actually trade this at.
+//
+// Over three months of longs, at $1 a trade on a $100 wallet:
+//
+//   max leverage   +746%   but a 110% drawdown — the account hit zero first,
+//                          so that return is imaginary
+//   25x            +565%   32% drawdown
+//   10x            +224%   16% drawdown
+//   grade A at 25x +372%   2% drawdown
+//
+// Max leverage is not the best row, it is the row that went bust before the
+// winners arrived. 25x is the most the account survived, so that is what the
+// app quotes, capped by whatever the symbol actually offers.
+export const tradeLev = (market, symbol, cfg = {}) =>
+  Math.max(1, Math.min(cfg.useLev ?? DEFAULTS.useLev, maxLev(market, symbol) || 1));
+
 // A deeper look back than the live sweep holds.
 //
 // The sweep's 500 bars are one request per coin and cover about twenty days of
@@ -357,11 +374,14 @@ export async function scanHistory({
       const o = simulateTrail(candles, ev, cfg);
       if (!o || o.entryTime < from) return null;
       const dead = o.dipPct >= 100 / lev;
+      const use = tradeLev(market, row.symbol, cfg);
+      const deadUse = o.dipPct >= 100 / use;
       return {
-        symbol: row.symbol, market, interval, side: ev.side, maxLev: lev,
+        symbol: row.symbol, market, interval, side: ev.side, maxLev: lev, useLev: use,
         coilPct: ev.boxWidthPct, volX: ev.volX, ...o,
         atMaxLev: dead ? -100 : o.pnlPct * lev,
         peakAtMaxLev: dead ? -100 : o.peakPct * lev,
+        atUseLev: deadUse ? -100 : o.pnlPct * use,
         liquidated: dead
       };
     }).filter(Boolean);
@@ -509,6 +529,8 @@ export async function scanUniverse({
       state.fired.grade = g.grade;
       state.fired.gradeWhy = g.why;
       state.fired.ctx = ctx;
+      state.fired.useLev = tradeLev(market, row.symbol, cfg);
+      state.fired.maxLev = maxLev(market, row.symbol) || 1;
     }
     // The candles are already here, so the track record of what this setup
     // caught in the same window is free — no extra request per coin.
@@ -519,11 +541,14 @@ export async function scanUniverse({
       // Liquidation lands near 100/leverage against you; a trade that got
       // there never collected the rest, whatever the chart did afterwards.
       const dead = o.dipPct >= 100 / lev;
+      const use = tradeLev(market, row.symbol, cfg);
+      const deadUse = o.dipPct >= 100 / use;
       return {
-        symbol: row.symbol, market, interval, side: ev.side, maxLev: lev,
+        symbol: row.symbol, market, interval, side: ev.side, maxLev: lev, useLev: use,
         coilPct: ev.boxWidthPct, volX: ev.volX, ...o,
         atMaxLev: dead ? -100 : o.pnlPct * lev,
         peakAtMaxLev: dead ? -100 : o.peakPct * lev,
+        atUseLev: deadUse ? -100 : o.pnlPct * use,
         liquidated: dead
       };
     }).filter(Boolean);
