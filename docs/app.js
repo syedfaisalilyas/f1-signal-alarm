@@ -595,7 +595,7 @@ function renderCoil(d) {
 // Two sources. The scan window costs nothing — those candles arrived with the
 // sweep. Anything longer is a separate deeper pass over fewer coins, so asking
 // for a year never slows down "what is igniting now".
-let pastRows = [], pastFrom = 'the scan window';
+let pastRows = [], pastFrom = 'the scan window', pastDays = 0;
 
 // Sort and coin search are free — they reorder what is already loaded, so they
 // apply the instant you touch them. Look-back is not free: a longer range is a
@@ -613,14 +613,18 @@ const RANGE_LABEL = { 0: 'the scan window', 30: 'last 30 days', 90: 'last 3 mont
 function markPastPending() {
   const days = Number($('#pastRange').value) || 0;
   const btn = $('#pastLoad');
-  btn.textContent = days ? `Load ${RANGE_LABEL[days]}` : 'Show scan window';
-  btn.classList.toggle('pending', RANGE_LABEL[days] !== pastFrom);
+  // Compare what is picked against what is loaded, by range — the meta line's
+  // wording never matches a label, so comparing text left it lit forever.
+  const loaded = days === pastDays;
+  btn.textContent = loaded ? 'Loaded' : days ? `Load ${RANGE_LABEL[days]}` : 'Show scan window';
+  btn.classList.toggle('pending', !loaded);
+  btn.disabled = loaded;
 }
 
 function renderCoilPast(d) {
   if (Number($('#pastRange').value)) return;   // a deeper range is on screen
   pastRows = d.history || [];
-  pastFrom = 'the scan window';
+  pastFrom = 'the scan window'; pastDays = 0;
   drawPast();
   markPastPending();
 }
@@ -629,7 +633,7 @@ async function loadPast() {
   const days = Number($('#pastRange').value) || 0;
   if (!days) {
     pastRows = lastCoil?.history || [];
-    pastFrom = 'the scan window';
+    pastFrom = 'the scan window'; pastDays = 0;
     drawPast(); markPastPending(); return;
   }
 
@@ -648,13 +652,14 @@ async function loadPast() {
     if (d.error) throw new Error(d.error);
     pastRows = d.rows;
     pastFrom = `${d.days} days · top ${d.coins} coins by volume`;
+    pastDays = d.days;
     drawPast();
   } catch (e) {
     $('#pastMeta').innerHTML = `<span class="warn">could not read history after ${secs}s — ${e.message}</span>`;
   } finally {
     clearInterval(tick);
     btn.disabled = false;
-    markPastPending();
+    markPastPending();   // re-disables if the picked range is now the loaded one
   }
 }
 
