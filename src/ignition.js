@@ -37,13 +37,12 @@ export const DEFAULTS = {
 
 const mean = a => a.length ? a.reduce((s, v) => s + v, 0) / a.length : 0;
 const clamp = (v, lo, hi) => Math.min(hi, Math.max(lo, v));
-
-// One symbol's state right now: how coiled it is, and whether it just went.
-export function ignition(candles, cfg = {}) {
-  const c = { ...DEFAULTS, ...cfg };
-  const bars = (candles || []).filter(b => b && b.closed !== false);
+// The rolling measurements every read shares: how tight the box is at each
+// bar, how dry the volume is, and whether a given bar breaks a given box.
+// The live read and the historical walk both go through this, so the rules
+// cannot drift apart between them.
+function prepare(bars, c) {
   const n = bars.length;
-  if (n < c.coilBars + 30) return null;
 
   const O = bars.map(b => b.o), H = bars.map(b => b.h);
   const L = bars.map(b => b.l), C = bars.map(b => b.c), V = bars.map(b => b.v);
@@ -142,6 +141,16 @@ export function ignition(candles, cfg = {}) {
     };
   };
 
+  return { n, O, H, L, C, V, A, VS, boxHi, boxLo, width, rankAt, dryAt, squeezeAt, fireAt };
+}
+
+// One symbol's state right now: how coiled it is, and whether it just went.
+export function ignition(candles, cfg = {}) {
+  const c = { ...DEFAULTS, ...cfg };
+  const bars = (candles || []).filter(b => b && b.closed !== false);
+  if (bars.length < c.coilBars + 30) return null;
+  const { n, C, V, A, boxHi, boxLo, width, rankAt, dryAt, squeezeAt, fireAt } = prepare(bars, c);
+
   const last = n - 1;
 
   // Anchor on the most recent bar this coin was asleep, then take the FIRST
@@ -217,6 +226,37 @@ export function ignition(candles, cfg = {}) {
     readiness,
     fired
   };
+}
+
+// Every ignition in a series, oldest first — the same rules the live read
+// applies, walked across history so the setup can be measured instead of
+// argued about.
+//
+// One difference, deliberately: the live read's "did this break fail" check is
+// hindsight (it needs the bars after the break), and at the moment of a break
+// there are none, so a live alert never gets that filter. The walk doesn't
+// apply it either, or the results would flatter a signal you cannot trade.
+export function ignitionEvents(candles, cfg = {}) {
+  const c = { ...DEFAULTS, ...cfg };
+  const bars = (candles || []).filter(b => b && b.closed !== false);
+  if (bars.length < c.coilBars + 30) return [];
+  const { n, boxHi, boxLo, squeezeAt, fireAt } = prepare(bars, c);
+
+  const events = [];
+  let base = -1, spent = false;
+  for (let i = c.coilBars; i < n; i++) {
+    if (squeezeAt(i)) { base = i; spent = false; continue; }
+    if (base < 0 || spent) continue;
+    if (i - base > c.squeezeMem) { base = -1; continue; }   // the base went stale
+    const f = fireAt(i, boxHi[base], boxLo[base]);
+    if (!f) continue;
+    f.baseTime = bars[base].t;
+    f.coilBars = i - base + c.coilBars;
+    f.bar = i;
+    events.push(f);
+    spent = true;                                          // first break only
+  }
+  return events;
 }
 
 // ─────────────────────────── market-wide scan ───────────────────────────
