@@ -48,7 +48,9 @@
       "interval": "1h",
       "minQuoteVol": 3000000,
       "fresh": 2,
-      "alertOn": "longs"
+      "alertOn": "A",
+      "maxLev": 25,
+      "bankPct": 50
     }
   }
 }
