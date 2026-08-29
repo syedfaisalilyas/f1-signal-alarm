@@ -54,6 +54,8 @@ const CFG = {
 const state = fs.existsSync(STATE) ? JSON.parse(fs.readFileSync(STATE, 'utf8')) : {};
 state.open ||= {};      // symbol -> { entry, peak, qty, lev, stopPrice, stopOrderId, signalTime }
 state.done ||= {};      // symbol:signalTime -> when we acted, so a signal fires once
+state.hwm ||= 0;        // the best the wallet has ever been
+state.locked ||= 0;     // profit set aside and never staked again
 
 const log = (...a) => console.log(`[${new Date().toISOString().slice(11, 19)}]`, ...a);
 const save = () => {
@@ -78,6 +80,28 @@ const wallet = PAPER
     });
 log(`wallet $${wallet.total.toFixed(2)} (available $${wallet.available.toFixed(2)})` +
   `  ·  ${LIVE ? 'LIVE — placing real orders' : PAPER ? 'PAPER (no keys, nothing placed)' : 'DRY RUN'}`);
+
+// ─── the ratchet ───
+// Winning months are followed by losing ones, and a stake sized off the whole
+// wallet hands the gains straight back. So every time the wallet makes a new
+// high, a share of that new profit is locked: it stays in the account, it is
+// never counted when sizing a trade, and it cannot be lost. Trades are staked
+// only from what is above the locked line, so a bad run bleeds the winnings it
+// was allowed to risk and then stops, instead of eating the whole balance.
+const BANK = Math.min(0.95, Math.max(0, +(process.env.BANK_PCT || ig.bankPct || 50) / 100));
+if (state.hwm === 0) state.hwm = wallet.total;
+if (wallet.total > state.hwm) {
+  const gained = wallet.total - state.hwm;
+  const put = gained * BANK;
+  state.locked = +(state.locked + put).toFixed(4);
+  state.hwm = wallet.total;
+  log(`  🔒 new high — locking $${put.toFixed(2)} of $${gained.toFixed(2)} profit (protected total $${state.locked.toFixed(2)})`);
+}
+const tradable = Math.max(0, wallet.total - state.locked);
+if (state.locked > 0) {
+  log(`  protected $${state.locked.toFixed(2)} · staking from $${tradable.toFixed(2)}` +
+    ` (peak was $${state.hwm.toFixed(2)})`);
+}
 
 // ─── 1. manage open positions ───
 // Raise the trail on anything already running. This happens first and without
@@ -116,7 +140,9 @@ for (const sym of Object.keys(state.open)) {
 log(`managing ${Object.keys(state.open).length} open position(s)`);
 
 // ─── 2. look for something new ───
-if (Object.keys(state.open).length >= CFG.maxOpen) {
+if (tradable <= 0.5) {
+  log(`only $${tradable.toFixed(2)} is unprotected — stopping here rather than touching the $${state.locked.toFixed(2)} locked away`);
+} else if (Object.keys(state.open).length >= CFG.maxOpen) {
   log(`at the ${CFG.maxOpen}-position cap — not opening more`);
 } else {
   const sweep = await scanUniverse({
@@ -141,7 +167,7 @@ if (Object.keys(state.open).length >= CFG.maxOpen) {
 
     const cap = PAPER ? (rules.get(r.symbol) ? 75 : 20) : await ex.maxLeverage(r.symbol).catch(() => 20);
     const lev = Math.max(1, CFG.maxLev > 0 ? Math.min(CFG.maxLev, cap) : cap);
-    const margin = wallet.total * CFG.riskPct / 100;
+    const margin = tradable * CFG.riskPct / 100;
     const notional = margin * lev;
     const qty = ex.roundQty(rule, notional / f.entry);
 

@@ -79,7 +79,9 @@ await mapLimit(board, 5, async (row) => {
       // NEW: the tide
       btc24: btcRet(c[i].t, PER_DAY), btc7d: btcRet(c[i].t, 7 * PER_DAY),
       // outcome
-      pnlPct: o.pnlPct, peakPct: o.peakPct, dipPct: o.dipPct
+      pnlPct: o.pnlPct, peakPct: o.peakPct, dipPct: o.dipPct,
+      // when it closed, so overlapping trades can be modelled honestly
+      exitTime: o.exitTime
     });
   }
 });
