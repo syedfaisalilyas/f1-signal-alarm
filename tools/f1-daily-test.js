@@ -91,15 +91,19 @@ const sum = a => a.reduce((s,v) => s+v, 0);
 const days = [...new Set(rows.map(r => r.day))].length;
 console.log(`\n${TF} · picked top ${PICK} by volatility among coins the strategy was already paying on`);
 console.log(`${rows.length} trades over ${days} trading days · ${(rows.length/Math.max(days,1)).toFixed(1)}/day\n`);
-console.log('  ' + 'leverage'.padEnd(11) + 'win'.padStart(6) + 'avg/trade'.padStart(12) + 'total'.padStart(11) + '   $100 becomes');
+console.log('  ' + 'leverage'.padEnd(11) + 'win'.padStart(6) + 'avg/trade'.padStart(12) + 'total'.padStart(11) + '   $100 becomes' + '   $1/trade'.padStart(14));
 for (const L of [1, 5, 10, 25]) {
   const v = rows.map(r => at(r, L));
   // 1% of the wallet per trade, compounded in order.
   let bal = 100;
   for (const r of rows.sort((a,b)=>a.day-b.day)) bal += Math.max(bal*0.01*at(r,L)/100, -bal*0.01);
+  // Flat $1 a trade — no compounding, so the number is just the edge times the
+  // number of trades, and a losing trade can only ever cost the $1.
+  const flat = sum(rows.map(r => Math.max(at(r, L), -100) / 100));
   console.log('  ' + (L===1?'spot (1x)':L+'x').padEnd(11) +
     ((rows.filter(r=>r.pnl>0).length/rows.length*100).toFixed(0)+'%').padStart(6) +
     ((sum(v)/v.length>=0?'+':'')+(sum(v)/v.length).toFixed(2)+'%').padStart(12) +
     ((sum(v)>=0?'+':'')+sum(v).toFixed(0)+'%').padStart(11) +
-    ('$'+bal.toFixed(2)).padStart(16));
+    ('$'+bal.toFixed(2)).padStart(16) +
+    ((flat>=0?'+$':'-$')+Math.abs(flat).toFixed(2)).padStart(14));
 }
