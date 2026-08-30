@@ -87,10 +87,28 @@ for (let d = start + 3 * DAY; d < end; d += DAY) {
 // A trade cannot lose more than its margin, and at leverage the stop may sit
 // beyond the liquidation distance — so floor every result at -100%.
 const at = (r, L) => { const l = Math.min(L, r.lev); return Math.max(r.pnl * l, -100); };
+// Cross margin, wallet far bigger than total notional: nothing is liquidated,
+// every trade runs to its own stop or target, so the loss is simply the stop
+// multiplied by the leverage. $1 of margin at 100x is a $100 position.
+const cross = r => r.pnl * r.lev / 100;
 const sum = a => a.reduce((s,v) => s+v, 0);
 const days = [...new Set(rows.map(r => r.day))].length;
 console.log(`\n${TF} · picked top ${PICK} by volatility among coins the strategy was already paying on`);
 console.log(`${rows.length} trades over ${days} trading days · ${(rows.length/Math.max(days,1)).toFixed(1)}/day\n`);
+// ── cross margin, $1 margin a trade at each symbol's exchange maximum ──
+{
+  const profit = sum(rows.map(cross));
+  const worst = sum(rows.map(r => Math.min(cross(r), 0)));
+  // Exposure at any one moment, which is what decides whether this is safe.
+  const byDay = {};
+  for (const r of rows) (byDay[r.day] ??= []).push(r.lev);
+  const peakDay = Math.max(...Object.values(byDay).map(a => sum(a)));
+  console.log(`  CROSS MARGIN · $1 margin per trade at each coin's max leverage`);
+  console.log(`    profit           ${profit >= 0 ? '+' : '-'}$${Math.abs(profit).toFixed(2)} on $${rows.length} of margin staked`);
+  console.log(`    $1000 wallet ->  $${(1000 + profit).toFixed(2)}   (${profit >= 0 ? '+' : ''}${(profit/10).toFixed(2)}% of wallet)`);
+  console.log(`    busiest day      $${peakDay} of notional open   (${(peakDay/1000).toFixed(2)}x account leverage on $1000)`);
+  console.log(`    all losses       -$${Math.abs(worst).toFixed(2)} across ${rows.filter(r => cross(r) < 0).length} losing trades\n`);
+}
 console.log('  ' + 'leverage'.padEnd(11) + 'win'.padStart(6) + 'avg/trade'.padStart(12) + 'total'.padStart(11) + '   $100 becomes' + '   $1/trade'.padStart(14));
 for (const L of [1, 5, 10, 25]) {
   const v = rows.map(r => at(r, L));
