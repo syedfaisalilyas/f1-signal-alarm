@@ -98,22 +98,40 @@ export async function searchSymbols(q, markets = ['spot', 'futures', 'forex']) {
 
 const TD_INTERVAL = { '1m': '1min', '3m': '1min', '5m': '5min', '15m': '15min', '30m': '30min', '1h': '1h' };
 
+// One shape for Binance-format klines, whichever host serves them.
+async function binanceKlines(base, symbol, interval, limit) {
+  const raw = await jget(`${base}/klines?symbol=${symbol}&interval=${interval}&limit=${limit}`);
+  return raw.map(k => ({
+    t: k[0], o: +k[1], h: +k[2], l: +k[3], c: +k[4], v: +k[5],
+    closeTime: k[6], closed: k[6] < Date.now()
+  }));
+}
+
 export async function fetchCandles(market, symbol, interval, limit = 500) {
   if (market === 'forex') return fetchForex(symbol, interval, limit);
-  if (market === 'futures' && futuresViaMexc) return perpCandles(symbol, interval, limit);
+  if (market === 'futures' && futuresViaMexc) {
+    try { return await perpCandles(symbol, interval, limit); }
+    catch { return binanceKlines(SPOT_MIRROR, symbol, interval, limit); }
+  }
   const base = market === 'futures' ? FUT : spotBase;
   try {
-    const raw = await jget(`${base}/klines?symbol=${symbol}&interval=${interval}&limit=${limit}`);
-    return raw.map(k => ({
-      t: k[0], o: +k[1], h: +k[2], l: +k[3], c: +k[4], v: +k[5],
-      closeTime: k[6], closed: k[6] < Date.now()
-    }));
+    return await binanceKlines(base, symbol, interval, limit);
   } catch (e) {
     if (!shouldFallBack(e)) throw e;
     if (market === 'futures') {
       futuresViaMexc = true;
       fellBack('perp candles', 'MEXC', isRateLimited(e) ? '418/429 (rate limit)' : '451');
-      return perpCandles(symbol, interval, limit);
+      try {
+        return await perpCandles(symbol, interval, limit);
+      } catch (m) {
+        // MEXC sends no CORS headers, so in a browser that request is blocked
+        // before it leaves. The spot mirror does send them and carries almost
+        // every perp's spot pair — a slightly different price for the same
+        // asset, which beats an empty chart.
+        const spot = await binanceKlines(SPOT_MIRROR, symbol, interval, limit);
+        fellBack('perp candles', 'binance.vision spot (MEXC unreachable from a browser)', 'CORS');
+        return spot;
+      }
     }
     if (spotBase === SPOT) {
       spotBase = SPOT_MIRROR;
