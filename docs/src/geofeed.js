@@ -10,6 +10,16 @@ const MEXC = 'https://contract.mexc.com/api/v1/contract';
 
 export const isGeoBlocked = (err) => /\b451\b/.test(String(err?.message));
 
+// Binance also cuts an IP off for asking too often: 429, escalating to a timed
+// 418 ban. From the app's side that is the same situation as a geo-block — the
+// host will not answer — and the same mirrors serve the data. Falling back
+// instead of erroring means a rate-limited afternoon degrades to MEXC rather
+// than filling the screen with red.
+export const isRateLimited = (err) => /\b(418|429)\b/.test(String(err?.message));
+
+// Any reason to stop asking this host and use the other one.
+export const shouldFallBack = (err) => isGeoBlocked(err) || isRateLimited(err);
+
 // MEXC perps are BASE_QUOTE where Binance is BASEQUOTE.
 export function mexcSymbol(symbol) {
   const m = symbol.toUpperCase().match(/^(.*?)(USDT|USDC|USD)$/);

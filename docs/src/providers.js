@@ -1,6 +1,6 @@
 // Market data. Crypto = Binance (no API key). Forex = Twelve Data (free key).
 
-import { SPOT_MIRROR, isGeoBlocked, mexcCandles, mexcTicker, mexcPerps, mexcFactor } from './geofeed.js';
+import { SPOT_MIRROR, isGeoBlocked, isRateLimited, shouldFallBack, mexcCandles, mexcTicker, mexcPerps, mexcFactor } from './geofeed.js';
 
 const SPOT = 'https://api.binance.com/api/v3';
 const FUT = 'https://fapi.binance.com/fapi/v1';
@@ -11,8 +11,8 @@ const TD = 'https://api.twelvedata.com';
 let spotBase = SPOT;
 let futuresViaMexc = false;
 
-function fellBack(what, to) {
-  console.warn(`[providers] Binance returned 451 for ${what} — using ${to}`);
+function fellBack(what, to, why = '451') {
+  console.warn(`[providers] Binance returned ${why} for ${what} — using ${to}`);
 }
 
 export const feedSources = () => ({
@@ -49,7 +49,7 @@ export async function listSymbols(market) {
     try {
       info = await jget(`${base}/exchangeInfo`);
     } catch (e) {
-      if (!isGeoBlocked(e)) throw e;
+      if (!shouldFallBack(e)) throw e;
       if (market === 'futures') { futuresViaMexc = true; fellBack('perp symbols', 'MEXC'); return listSymbols(market); }
       if (spotBase === SPOT) { spotBase = SPOT_MIRROR; fellBack('spot symbols', 'data-api.binance.vision'); return listSymbols(market); }
       throw e;
@@ -109,15 +109,15 @@ export async function fetchCandles(market, symbol, interval, limit = 500) {
       closeTime: k[6], closed: k[6] < Date.now()
     }));
   } catch (e) {
-    if (!isGeoBlocked(e)) throw e;
+    if (!shouldFallBack(e)) throw e;
     if (market === 'futures') {
       futuresViaMexc = true;
-      fellBack('perp candles', 'MEXC');
+      fellBack('perp candles', 'MEXC', isRateLimited(e) ? '418/429 (rate limit)' : '451');
       return perpCandles(symbol, interval, limit);
     }
     if (spotBase === SPOT) {
       spotBase = SPOT_MIRROR;
-      fellBack('spot candles', 'data-api.binance.vision');
+      fellBack('spot candles', 'data-api.binance.vision', isRateLimited(e) ? '418/429 (rate limit)' : '451');
       return fetchCandles(market, symbol, interval, limit);
     }
     throw e;
@@ -198,7 +198,7 @@ export async function ticker24h(market, symbol) {
     const d = await jget(`${base}/ticker/24hr?symbol=${symbol}`);
     return { price: +d.lastPrice, changePct: +d.priceChangePercent, volume: +d.quoteVolume };
   } catch (e) {
-    if (!isGeoBlocked(e)) throw e;
+    if (!shouldFallBack(e)) throw e;
     if (market === 'futures') { futuresViaMexc = true; fellBack('perp ticker', 'MEXC'); return mexcTicker(symbol); }
     if (spotBase === SPOT) { spotBase = SPOT_MIRROR; fellBack('spot ticker', 'data-api.binance.vision'); return ticker24h(market, symbol); }
     throw e;
