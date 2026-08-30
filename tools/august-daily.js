@@ -21,12 +21,15 @@ import { maxLev, hydrate } from '../src/leverage.js';
 try { hydrate(JSON.parse(fs.readFileSync('cloud/leverage.json', 'utf8'))); } catch {}
 const flag = (n, d) => { const i = process.argv.indexOf(`--${n}`); return i >= 0 ? process.argv[i+1] : d; };
 const PICK = +flag('pick', 10);
+// The board only gives intraday detail to its top 45 by default, so asking for
+// more than that silently returns 45. Widen it to match what was asked.
+const DEPTH = +flag('depth', Math.max(PICK, 45));
 const TFS = ['1m', '3m', '5m'];
 const DAY = 864e5;
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 
-const board = (await new VolatilityScanner().board('futures', [])).slice(0, PICK);
-process.stderr.write(`[aug] top ${board.length} by volatility: ${board.map(b=>b.symbol).join(', ')}\n`);
+const board = (await new VolatilityScanner({ depth: DEPTH }).board('futures', [])).slice(0, PICK);
+process.stderr.write(`[aug] asked ${PICK}, board returned ${board.length}\n`);
 
 // One deep pull per coin per timeframe, then every day is computed offline.
 const series = [];
