@@ -10,9 +10,19 @@
 import { ema, adx } from './indicators.js';
 import { fetchCandles } from './providers.js';
 
-export const TREND_TFS = ['15m', '1h', '4h'];
+// Two groups. The fast three are the scalp's own neighbourhood — they say
+// whether the move being entered is already underway. The higher three are the
+// context that decides whether it is with or against the market.
+export const FAST_TFS = ['1m', '3m', '5m'];
+export const HIGHER_TFS = ['15m', '1h', '4h'];
+export const TREND_TFS = [...FAST_TFS, ...HIGHER_TFS];
 const BARS = 200;
+
+// A cached 1m read is worthless five minutes later — that is five bars stale.
+// Roughly half a bar each, so a cell is never more than one bar behind.
+const TTL_BY_TF = { '1m': 45e3, '3m': 90e3, '5m': 150e3 };
 const TTL = 5 * 60 * 1000;
+const ttlFor = tf => TTL_BY_TF[tf] ?? TTL;
 const MIN_ADX = 18;          // below this the market has no usable direction
 const MIN_SEP = 0.05;        // EMAs within this % of price is a dead heat
 
@@ -51,7 +61,7 @@ function classify(bars) {
 async function forTf(market, symbol, tf) {
   const key = `${market}:${symbol}:${tf}`;
   const hit = cache.get(key);
-  if (hit && Date.now() - hit.at < TTL) return hit.value;
+  if (hit && Date.now() - hit.at < ttlFor(tf)) return hit.value;
 
   try {
     const bars = await fetchCandles(market, symbol, tf, BARS);
@@ -72,7 +82,11 @@ export async function trendFor(market, symbol, tfs = TREND_TFS) {
   if (market === 'forex') return null;
   const out = {};
   for (const tf of tfs) out[tf] = await forTf(market, symbol, tf);
-  const dirs = Object.values(out).filter(Boolean).map(t => t.dir);
+
+  // Bias stays a read of the HIGHER timeframes only. Folding 1m/3m/5m into it
+  // would make "all agree" almost unreachable, and the counter-trend warning
+  // on the card is driven by this — widening it would quietly switch that off.
+  const dirs = HIGHER_TFS.map(tf => out[tf]).filter(Boolean).map(t => t.dir);
   const up = dirs.filter(d => d === 'UP').length;
   const down = dirs.filter(d => d === 'DOWN').length;
   return {
@@ -85,5 +99,5 @@ export async function trendFor(market, symbol, tfs = TREND_TFS) {
 
 export const isStale = (market, symbol, tf) => {
   const hit = cache.get(`${market}:${symbol}:${tf}`);
-  return !hit || Date.now() - hit.at >= TTL;
+  return !hit || Date.now() - hit.at >= ttlFor(tf);
 };

@@ -153,15 +153,27 @@ function render() {
 }
 const TREND_ARROW = { UP: '▲', DOWN: '▼', FLAT: '–' };
 
-// The 15m/1h/4h read for the coin, so a scalp signal is seen in context.
+// Mirrors FAST_TFS in src/trend.js — app.js takes state over the socket rather
+// than importing the engine, so the split is repeated here.
+const FAST_TFS = ['1m', '3m', '5m'];
+
+// The full 1m/3m/5m · 15m/1h/4h read for the coin. The fast three say whether
+// the move is already running; the higher three say what it is running into,
+// and only those decide the bias chip and the counter-trend warning.
 function trendRow(t) {
-  const cells = Object.entries(t.tfs).map(([tf, d]) => {
+  const cell = ([tf, d]) => {
     if (!d) return `<span class="tr none"><b>${tf}</b>—</span>`;
     const cls = d.dir === 'UP' ? 'up' : d.dir === 'DOWN' ? 'down' : 'flat';
     const move = `${d.changePct >= 0 ? '+' : ''}${d.changePct}%`;
     return `<span class="tr ${cls}" title="${tf}: ${d.dir.toLowerCase()} · ADX ${d.adx ?? '—'} · EMA21/55 gap ${d.sep}% · ${move} over 55 bars">`
       + `<b>${tf}</b>${TREND_ARROW[d.dir]}</span>`;
-  }).join('');
+  };
+  const entries = Object.entries(t.tfs);
+  const fast = entries.filter(([tf]) => FAST_TFS.includes(tf));
+  const higher = entries.filter(([tf]) => !FAST_TFS.includes(tf));
+  const cells = fast.map(cell).join('')
+    + (fast.length && higher.length ? '<span class="tr-split" aria-hidden="true"></span>' : '')
+    + higher.map(cell).join('');
   const bias = t.bias === 'MIXED'
     ? '<span class="tr bias mixed" title="The timeframes disagree">mixed</span>'
     : `<span class="tr bias ${t.bias.toLowerCase()}" title="All timeframes agree">${t.bias === 'UP' ? 'uptrend' : 'downtrend'}</span>`;

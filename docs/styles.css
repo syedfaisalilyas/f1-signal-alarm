@@ -280,13 +280,16 @@ main{max-width:1400px;margin:0 auto;padding:0 16px}
 .lvbox.rec{border-color:rgba(38,208,124,.35);background:rgba(38,208,124,.06)}
 .lvbox.rec b{color:var(--up)}
 
-/* higher-timeframe context on each card */
-.trend { display:flex; align-items:center; gap:6px; flex-wrap:wrap; margin:9px 0 2px }
+/* per-coin trend row: 1m/3m/5m, then 15m/1h/4h, then the bias chip */
+.trend { display:flex; align-items:center; gap:5px; flex-wrap:wrap; margin:9px 0 2px }
 .trend .tr {
   display:inline-flex; align-items:center; gap:4px; font-size:11.5px;
-  padding:2px 8px; border-radius:999px; background:var(--panel2);
+  padding:2px 7px; border-radius:999px; background:var(--panel2);
   color:var(--faint); font-variant-numeric:tabular-nums; cursor:help;
 }
+/* separates the scalp timeframes from the context ones so six chips still read
+   as two groups rather than one undifferentiated run */
+.trend .tr-split { width:1px; align-self:stretch; margin:2px 3px; background:var(--line); border-radius:1px }
 .trend .tr b { font-size:10.5px; font-weight:600; letter-spacing:.3px; color:var(--faint) }
 .trend .up { color:var(--up) }
 .trend .down { color:var(--down) }
