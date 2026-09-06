@@ -18,6 +18,7 @@ import { searchSymbols, listSymbols, fetchCandles, fetchCandlesDeep } from './sr
 import { VolatilityScanner } from './src/volatility.js';
 import { Screener } from './src/screener.js';
 import { IgnitionScanner } from './src/ignition.js';
+import { coinReport } from './src/coinreport.js';
 import { hydrate as hydrateLeverage, setOverrides } from './src/leverage.js';
 import { buildMessage } from './src/notify.js';
 import { filterTrades, aggregate, coverage } from './src/history.js';
@@ -250,6 +251,12 @@ async function route(path, params, method, body) {
   }
 
   if (path === '/api/log') return json(state.log.slice(0, 100));
+  if (path === '/api/coin') {
+    const market = params.get('market') === 'spot' ? 'spot' : 'futures';
+    const symbol = (params.get('symbol') || '').trim().toUpperCase();
+    if (!/^[A-Z0-9]{4,20}$/.test(symbol)) return json({ error: 'symbol required' }, 400);
+    return json(await coinReport(market, symbol));
+  }
   if (path === '/api/volatility') return volatility(params);
   if (path === '/api/volatility/lookup') return lookup(params);
   if (path.startsWith('/api/history/')) return history(decodeURIComponent(path.slice('/api/history/'.length)), params);

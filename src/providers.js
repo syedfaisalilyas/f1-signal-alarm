@@ -99,10 +99,14 @@ export async function searchSymbols(q, markets = ['spot', 'futures', 'forex']) {
 const TD_INTERVAL = { '1m': '1min', '3m': '1min', '5m': '5min', '15m': '15min', '30m': '30min', '1h': '1h' };
 
 // One shape for Binance-format klines, whichever host serves them.
+// qv/n/tb ride along because the coin report needs them: quote volume says
+// whether a size is tradeable, and taker-buy vs total volume is the only
+// order-flow read available without a paid feed. MEXC's candles carry none of
+// them, so anything using these has to cope with undefined.
 async function binanceKlines(base, symbol, interval, limit) {
   const raw = await jget(`${base}/klines?symbol=${symbol}&interval=${interval}&limit=${limit}`);
   return raw.map(k => ({
-    t: k[0], o: +k[1], h: +k[2], l: +k[3], c: +k[4], v: +k[5],
+    t: k[0], o: +k[1], h: +k[2], l: +k[3], c: +k[4], v: +k[5], qv: +k[7], n: +k[8], tb: +k[9],
     closeTime: k[6], closed: k[6] < Date.now()
   }));
 }
@@ -197,7 +201,7 @@ export async function fetchCandlesDeep(market, symbol, interval, bars = 3000) {
     const raw = await jget(`${base}/klines?symbol=${symbol}&interval=${interval}&limit=1500&endTime=${endTime}`);
     if (!raw.length) break;
     const chunk = raw.map(k => ({
-      t: k[0], o: +k[1], h: +k[2], l: +k[3], c: +k[4], v: +k[5],
+      t: k[0], o: +k[1], h: +k[2], l: +k[3], c: +k[4], v: +k[5], qv: +k[7], n: +k[8], tb: +k[9],
       closeTime: k[6], closed: k[6] < Date.now()
     }));
     out.unshift(...chunk);

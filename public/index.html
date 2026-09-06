@@ -73,6 +73,7 @@
           <span class="vnum sortable" data-k="vol5m">5M</span>
           <span class="vnum sortable" data-k="vol1h">1H</span>
           <span class="vnum sortable active" data-k="vol1d">1D</span>
+          <span class="vmore"></span>
         </div>
         <div id="volRows"></div>
       </div>
@@ -143,6 +144,24 @@
     </div>
     <div id="bestMeta" class="histmeta"></div>
     <div id="bestRows" class="hrows"></div>
+  </div>
+</div>
+
+<!-- one coin, everything -->
+<div id="coinModal" class="modal hidden">
+  <div class="sheet">
+    <div class="sheethead">
+      <div>
+        <h2 id="coinTitle">—</h2>
+        <div class="dim" style="font-size:12px;margin-top:3px" id="coinSub">reading the tape…</div>
+      </div>
+      <div class="cbtns">
+        <a id="coinChart" class="btn ghost" target="_blank" rel="noopener noreferrer"
+           title="Open this coin on TradingView">chart ↗</a>
+        <button id="coinClose" class="btn ghost">✕</button>
+      </div>
+    </div>
+    <div id="coinBody"></div>
   </div>
 </div>
 

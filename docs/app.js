@@ -958,10 +958,12 @@ function volRow(r, isLookup) {
     `<span class="vsym">${r.symbol}${r.pinned ? '<span class="star">⭐</span>' : ''}</span>
      <span class="vnum ${volClass(r.vol5m, 'vol5m')}">${vpct(r.vol5m)}</span>
      <span class="vnum ${volClass(r.vol1h, 'vol1h')}">${vpct(r.vol1h)}</span>
-     <span class="vnum ${volClass(r.vol1d, 'vol1d')}">${vpct(r.vol1d)}</span>`);
+     <span class="vnum ${volClass(r.vol1d, 'vol1d')}">${vpct(r.vol1d)}</span>
+     <button class="vmore" title="Full report — trend, levels, flow, and whether there is a trade in it">⋯</button>`);
   n.title = `24h volume $${(r.quoteVol / 1e6).toFixed(1)}M · change ${r.changePct?.toFixed(2)}%` +
             (r.avg5m != null ? ` · avg 5m move ${r.avg5m.toFixed(2)}%` : '');
   n.querySelector('.vsym').onclick = () => addWatch({ market: r.market, symbol: r.symbol });
+  n.querySelector('.vmore').onclick = e => { e.stopPropagation(); openCoin(r.market, r.symbol); };
   return n;
 }
 
@@ -1003,6 +1005,189 @@ function initVol() {
   clearInterval(volTimer);
   volTimer = setInterval(() => { if (!$('#volBody').classList.contains('hidden')) loadVol(); }, 90000);
 }
+
+// ─────────── one coin, everything ───────────
+//
+// The board says what is moving. This says whether there is a trade in it, and
+// refuses to invent one when there isn't. Everything here comes from /api/coin;
+// the page only lays it out.
+
+// Thresholds sit just below each power so 999,800 reads as $1.0M, not $1000K.
+const money = v => v == null ? '—'
+  : v >= 995e6 ? '$' + (v / 1e9).toFixed(2) + 'B'
+  : v >= 999.5e3 ? '$' + (v / 1e6).toFixed(1) + 'M'
+  : v >= 999.5 ? '$' + (v / 1e3).toFixed(0) + 'K' : '$' + v.toFixed(0);
+const sideCls = s => s === 'LONG' ? 'up' : s === 'SHORT' ? 'down' : 'warn';
+const dirCls = d => d === 'UP' ? 'up' : d === 'DOWN' ? 'down' : 'flat';
+const dirArrow = d => d === 'UP' ? '▲' : d === 'DOWN' ? '▼' : '—';
+
+// TradingView names Binance perps SYMBOL.P and spot pairs plain, so the market
+// the row came from decides which chart opens. Hourly, because that is the
+// timeframe every reading in this panel is measured on.
+const tvUrl = (market, symbol) =>
+  'https://www.tradingview.com/chart/?symbol=' +
+  encodeURIComponent(`BINANCE:${symbol}${market === 'futures' ? '.P' : ''}`) + '&interval=60';
+
+let coinReq = 0;
+
+async function openCoin(market, symbol) {
+  const mine = ++coinReq;
+  $('#coinModal').classList.remove('hidden');
+  $('#coinTitle').textContent = symbol;
+  $('#coinSub').textContent = (market === 'spot' ? 'spot' : 'USD-M perp') + ' · reading the tape…';
+  $('#coinChart').href = tvUrl(market, symbol);
+  $('#coinBody').innerHTML =
+    '<div class="cwait">pulling 1h / 15m / 5m candles, six trend timeframes, funding, open interest and the long-short book…</div>';
+  try {
+    const d = await apiJson(`/api/coin?market=${market}&symbol=${encodeURIComponent(symbol)}`);
+    if (mine !== coinReq) return;                    // a newer coin was opened meanwhile
+    if (d.error) throw new Error(d.error);
+    renderCoin(d);
+  } catch (e) {
+    if (mine === coinReq) $('#coinBody').innerHTML = `<div class="cwait">could not build the report — ${e.message}</div>`;
+  }
+}
+
+function hourStrip(profile) {
+  if (!profile?.length) return '';
+  // Height is the hour's range against this coin's own normal hour, so the
+  // strip reads the same on BTC and on a meme coin. 5× tops it out.
+  const bars = profile.map(h => {
+    const pctH = Math.max(4, Math.min(100, (h.ratio || 0) / 5 * 100));
+    const hot = (h.ratio || 0) >= 2 ? ' hot' : '';
+    const t = new Date(h.t).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+    return `<i class="${h.up ? 'up' : 'down'}${hot}" style="height:${pctH}%" title="${t} · range ${h.rangePct}% (${h.ratio}× normal) · ${pct(h.chgPct || 0)}"></i>`;
+  }).join('');
+  return `<div class="hstrip">${bars}</div>
+    <div class="hstriplbl"><span>48h ago</span><span>now</span></div>
+    <div class="cnote">One bar per hour. Height is that hour's range against this coin's normal hour, green up / red down — bright bars are 2× normal or more.</div>`;
+}
+
+function lvlRows(list, kind) {
+  if (!list?.length) return `<div class="cnote">no clean ${kind} in the last fortnight</div>`;
+  return `<div class="ctable">` + list.map(l =>
+    `<div class="crow"><span class="${kind === 'support' ? 'up' : 'down'}">${fmtPx(l.price)}</span>` +
+    `<span class="dim">${l.distPct >= 0 ? '+' : ''}${l.distPct}%</span>` +
+    `<span class="dim">${l.touches} touch${l.touches === 1 ? '' : 'es'}</span></div>`).join('') + `</div>`;
+}
+
+function renderCoin(d) {
+  const v = d.volatility, p = d.plan, l = d.levels, f = d.flow, fb = d.fib, lq = d.liquidity;
+  $('#coinTitle').textContent = d.symbol;
+  $('#coinChart').href = tvUrl(d.market, d.symbol);
+  $('#coinSub').innerHTML =
+    `${d.market === 'spot' ? 'spot' : 'USD-M perp'} · ${fmtPx(d.price)} · ` +
+    `<b class="${d.changePct >= 0 ? 'up' : 'down'}">${pct(d.changePct ?? 0)}</b> in 24h · ` +
+    `${money(lq.quoteVol)} traded${d.maxLev ? ' · up to ' + d.maxLev + '×' : ''}`;
+
+  const trade = p.side === 'WAIT' ? '' : `
+    <div class="cplan">
+      <div><em>entry</em><b>${fmtPx(p.entry)}</b></div>
+      <div><em>stop</em><b class="down">${fmtPx(p.stop)}</b></div>
+      ${p.targets.map((t, i) => `<div><em>target ${i + 1}</em><b class="up">${fmtPx(t)}</b></div>`).join('')}
+      <div><em>risk</em><b>${p.riskPct}%</b></div>
+      ${p.rr ? `<div><em>reward:risk</em><b>${p.rr}:1</b></div>` : ''}
+      ${p.lev ? `<div><em>size at</em><b>${p.lev}×</b></div>` : ''}
+    </div>`;
+
+  const triggers = p.side === 'WAIT' && p.triggers?.length ? `
+    <div class="ctrig">
+      ${p.triggers.map(t => `<div><span class="pill ${sideCls(t.side)}">${t.side}</span> ${t.text}</div>`).join('')}
+    </div>` : '';
+
+  const tfs = d.trend?.tfs || {};
+  const trendRow = Object.keys(tfs).length ? `<div class="ctf">` + Object.entries(tfs).map(([tf, t]) =>
+    `<div class="tfchip ${dirCls(t?.dir)}"><span>${tf}</span><b>${dirArrow(t?.dir)}</b>` +
+    `<em>${t?.adx != null ? 'ADX ' + t.adx : '—'}</em></div>`).join('') + `</div>` : '<div class="cnote">no trend data</div>';
+
+  const fibHtml = !fb ? '<div class="cnote">not enough history for a swing</div>' : `
+    <div class="cnote">Last ${fb.dir === 'up' ? 'up-leg' : 'down-leg'}: ${fmtPx(fb.from)} → ${fmtPx(fb.to)},
+      retraced <b>${fb.retracement}%</b> — ${fb.zone}.</div>
+    <div class="ctable">${fb.levels.map(x =>
+      `<div class="crow${x.r === 0.618 ? ' hi' : ''}"><span>${x.r}</span><span>${fmtPx(x.price)}</span>` +
+      `<span class="dim">${x.distPct >= 0 ? '+' : ''}${x.distPct}%</span></div>`).join('')}</div>
+    <div class="cnote">If it keeps going: ${fb.ext.map(x => `${x.r} → <b>${fmtPx(x.price)}</b>`).join(' · ')}</div>`;
+
+  const trapsHtml = !d.traps.length
+    ? '<div class="cnote">no clean stop-run in the last day — nobody has been trapped at an obvious level</div>'
+    : `<div class="clist">${d.traps.map(t =>
+        `<div><span class="pill ${t.side === 'bullish' ? 'up' : 'down'}">${ago(t.t)} ago</span> ${t.text}</div>`).join('')}</div>`;
+
+  const dv = f.derivs;
+  const flowGrid = `
+    <div class="cgrid">
+      <div><em>market buys, 24h</em><b>${f.takerBuy24h ?? '—'}%</b></div>
+      <div><em>market buys, 4h</em><b>${f.takerBuy4h ?? '—'}%</b></div>
+      <div><em>OBV</em><b class="${dirCls(f.obvDir.toUpperCase())}">${f.obvDir}</b></div>
+      <div><em>RSI 1h</em><b>${f.rsi1h ?? '—'}</b></div>
+      ${dv ? `<div><em>funding / 8h</em><b class="${dv.funding >= 0.03 ? 'down' : dv.funding <= -0.03 ? 'up' : ''}">${dv.funding}%</b></div>
+      <div><em>open interest</em><b>${money(dv.oiUsd)}${dv.oiChg24h != null ? ` <i class="${dv.oiChg24h >= 0 ? 'up' : 'down'}">${dv.oiChg24h >= 0 ? '+' : ''}${dv.oiChg24h}%</i>` : ''}</b></div>
+      <div><em>accounts long</em><b>${dv.crowdLongPct}%</b></div>
+      <div><em>top traders long</em><b>${dv.topLongPct}%</b></div>` : ''}
+    </div>
+    ${f.read?.length ? `<div class="clist">${f.read.map(x => `<div>· ${x}</div>`).join('')}</div>` : ''}
+    ${f.crowd ? `<div class="cnote crowd">${f.crowd.text}</div>` : ''}`;
+
+  $('#coinBody').innerHTML = `
+    <div class="verdict ${sideCls(p.side)}">
+      <div class="vtop"><span class="pill big ${sideCls(p.side)}">${p.side}</span><span>${p.headline}</span></div>
+      ${trade}${triggers}
+    </div>
+
+    <h4>Why — and why not</h4>
+    <div class="ccase">
+      <div><h5 class="up">For a long</h5>${p.bull.length ? p.bull.map(x => `<div>· ${x}</div>`).join('') : '<div class="dim">nothing</div>'}</div>
+      <div><h5 class="down">For a short</h5>${p.bear.length ? p.bear.map(x => `<div>· ${x}</div>`).join('') : '<div class="dim">nothing</div>'}</div>
+    </div>
+    ${p.blockers.length ? `<div class="cblock">${p.blockers.map(x => `<div>⚠ ${x}</div>`).join('')}</div>` : ''}
+
+    <h4>Can you even trade it</h4>
+    <div class="cgrid">
+      <div><em>24h turnover</em><b>${money(lq.quoteVol)}</b></div>
+      <div><em>last hour</em><b>${money(lq.lastHourQuote)}</b></div>
+      <div><em>position that fills</em><b>${money(lq.maxSize)}</b></div>
+      <div><em>verdict</em><b class="${lq.verdict === 'thin' ? 'down' : lq.verdict === 'small' ? 'warn' : 'up'}">${lq.verdict}</b></div>
+    </div>
+    <div class="cnote">${lq.note}</div>
+
+    <h4>Volatility — in this coin's own units</h4>
+    <div class="cgrid">
+      <div><em>state</em><b class="${v.state === 'coiled' ? 'warn' : v.state === 'wild' ? 'down' : 'up'}">${v.state}</b></div>
+      <div><em>normal hour</em><b>${v.medianHourPct}%</b></div>
+      <div><em>this hour</em><b>${v.nowHourPct}% <i class="dim">(${v.nowRatio}×)</i></b></div>
+      <div><em>hot hours, 24h</em><b>${v.hotHours24}/24</b></div>
+      <div><em>ATR 1h</em><b>${v.atr1hPct}%</b></div>
+      <div><em>ATR 5m</em><b>${v.atr5mPct ?? '—'}%</b></div>
+    </div>
+    <div class="cnote">${v.note}${v.startedAt ? ` The expansion started <b>${ago(v.startedAt)} ago</b>, at ${new Date(v.startedAt).toLocaleString([], { hour: '2-digit', minute: '2-digit', day: '2-digit', month: 'short' })}.` : ''}</div>
+    ${hourStrip(v.profile)}
+    <div class="cnote warnnote">A wide hour says a move is more likely than usual. It never says which way — the biggest days on this board are dumps as often as pumps.</div>
+
+    <h4>Trend, six timeframes</h4>
+    ${trendRow}
+    <div class="cnote">Higher-timeframe bias: <b>${d.trend?.bias ?? '—'}</b>. A scalp against this is a counter-trend trade whatever the entry says.</div>
+
+    <h4>Levels</h4>
+    <div class="ccase">
+      <div><h5 class="up">Support</h5>${lvlRows(l.support, 'support')}</div>
+      <div><h5 class="down">Resistance</h5>${lvlRows(l.resistance, 'resistance')}</div>
+    </div>
+    <div class="cnote">Volume shelf (POC) at <b>${fmtPx(l.poc)}</b>, ${l.pocDistPct >= 0 ? '+' : ''}${l.pocDistPct}% away — value area ${fmtPx(l.val)} to ${fmtPx(l.vah)}. Price is <b>${l.vsPoc}</b> it.</div>
+
+    <h4>Fibonacci</h4>
+    ${fibHtml}
+
+    <h4>Wick traps &amp; stop runs</h4>
+    ${trapsHtml}
+
+    <h4>Order flow &amp; positioning</h4>
+    ${flowGrid}
+
+    <div class="cfoot">built ${new Date(d.at).toLocaleTimeString()} · every number is a description of what already happened, not a forecast</div>`;
+}
+
+$('#coinClose').onclick = () => { coinReq++; $('#coinModal').classList.add('hidden'); };
+$('#coinModal').onclick = e => { if (e.target.id === 'coinModal') { coinReq++; $('#coinModal').classList.add('hidden'); } };
 
 // ─────────── sound ───────────
 function ensureAudio() {

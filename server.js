@@ -15,6 +15,7 @@ import { DEFAULTS } from './src/strategy.js';
 import { VolatilityScanner } from './src/volatility.js';
 import { Screener } from './src/screener.js';
 import { IgnitionScanner } from './src/ignition.js';
+import { coinReport } from './src/coinreport.js';
 import { refresh as refreshLeverage, loaded as levLoaded, sourceName as levSourceName, setOverrides } from './src/leverage.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -321,6 +322,17 @@ app.get('/api/ignition', async (req, res) => {
       coiling: d.coiling.slice(0, 20).map(tag),
       history: d.history.slice(0, 25)
     });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// One coin, everything: liquidity, volatility in its own units, trend on six
+// timeframes, levels, fib, sweeps, order flow — and a side, or a refusal.
+app.get('/api/coin', async (req, res) => {
+  try {
+    const market = req.query.market === 'spot' ? 'spot' : 'futures';
+    const symbol = (req.query.symbol || '').trim().toUpperCase();
+    if (!/^[A-Z0-9]{4,20}$/.test(symbol)) return res.status(400).json({ error: 'symbol required' });
+    res.json(await coinReport(market, symbol));
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
