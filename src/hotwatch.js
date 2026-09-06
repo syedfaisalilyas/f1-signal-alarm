@@ -50,6 +50,8 @@ export const HOT_DEFAULTS = {
   calmBars: 6,
   maxRunPct: 40,        // moved this much in 24h already = you are late, not early
   lookback: 4,          // how many closed hours back a wake-up still counts
+  minCoins: 120,        // below this the floor is wrong for the venue, so rank
+  maxCoins: 220,        // …and take this many by turnover instead
   bars: 400,            // ~16 days of hourly candles, one request per coin
   concurrency: 8,
   confirm: 6            // how many candidates get the expensive second stage
@@ -152,7 +154,17 @@ function grade(hit, rep) {
 // One sweep. Cheap on every coin, expensive on the few that survive.
 export async function hotSweep(opts = {}) {
   const cfg = { ...HOT_DEFAULTS, ...opts };
-  const list = await universe(cfg.market, cfg.minQuoteVol);
+  let list = await universe(cfg.market, cfg.minQuoteVol);
+
+  // $5M a day is a Binance-sized number. Under a geo-block — every GitHub
+  // runner is in a blocked region — the candles come from MEXC instead, where
+  // the same coins turn over a fraction as much, and that floor silently cut
+  // the board from 214 coins to 55. So when the absolute cut leaves too few,
+  // rank instead: the busiest N on whichever venue is actually answering.
+  if (list.length < cfg.minCoins) {
+    const all = await universe(cfg.market, 0);
+    list = all.sort((a, b) => b.quoteVol - a.quoteVol).slice(0, cfg.maxCoins);
+  }
   const { fetchCandles } = await import('./providers.js');
 
   const hits = (await mapLimit(list, cfg.concurrency, async row => {

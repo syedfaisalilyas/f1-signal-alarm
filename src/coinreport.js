@@ -17,7 +17,7 @@
 // descriptive. Wide hourly candles say a move is more likely than usual — they
 // never say which way. COLLECT's 90% day on 5 Sep was DOWN.
 
-import { fetchCandles, ticker24h } from './providers.js';
+import { fetchCandles, ticker24h, feedSources } from './providers.js';
 import { atr as atrSeries, sma, rsi } from './indicators.js';
 import { buildProfile } from './volumeprofile.js';
 import { trendFor } from './trend.js';
@@ -49,21 +49,32 @@ async function jget(url, ms = 12000) {
 }
 
 // ─── how much of this can you actually trade ───
-function liquidity(t, h1) {
+function liquidity(t, h1, venue = 'binance') {
   const lastHourQuote = h1.length ? (h1.at(-1).qv ?? h1.at(-1).v * h1.at(-1).c) : 0;
   const day = t?.volume || 0;
   // A market maker's rule of thumb: stay under a small share of the flow you
   // are joining, or your own order is the move. Half a percent of an hour's
   // turnover fills without arguing on most books.
   const size = lastHourQuote * 0.005;
-  const verdict = day < 2e6 ? 'thin' : day < 10e6 ? 'small' : day < 100e6 ? 'ok' : 'deep';
+
+  // These cuts are Binance dollars. When Binance is geo-blocked the numbers
+  // arrive from MEXC, where the same coin shows a fraction of the turnover —
+  // BTC reads $2.2B there against Binance's tens of billions. Judging MEXC
+  // volume by a Binance yardstick marks perfectly tradeable coins "thin" and
+  // grades every alert away, so the scale moves with the venue. The factor is
+  // a rough read of that gap, not a measurement.
+  const k = venue === 'binance' ? 1 : 1 / 8;
+  const verdict = day < 2e6 * k ? 'thin' : day < 10e6 * k ? 'small' : day < 100e6 * k ? 'ok' : 'deep';
   const note = {
-    thin: 'under $2M a day — the spread and slippage will eat a scalp. Not tradeable size.',
+    thin: `under $${(2 * k).toFixed(1)}M a day — the spread and slippage will eat a scalp. Not tradeable size.`,
     small: 'a few million a day. Fine for small size, painful to exit in a hurry.',
     ok: 'enough turnover to get in and out at normal size.',
     deep: 'deep book — size is not your constraint here.'
   }[verdict];
-  return { quoteVol: day, lastHourQuote, maxSize: size, verdict, note };
+  return {
+    quoteVol: day, lastHourQuote, maxSize: size, verdict, venue,
+    note: note + (venue === 'binance' ? '' : ` (turnover as ${venue} reports it — Binance is blocked from here)`)
+  };
 }
 
 // ─── volatility, in the coin's own units ───
@@ -422,7 +433,7 @@ async function build(market, symbol, { withTrend = true } = {}) {
 
   const vol = volatility(h1, m5);
   const atr = price * (vol.atr1hPct || 2) / 100;
-  const liq = liquidity(t, h1.filter(b => b.closed));
+  const liq = liquidity(t, h1.filter(b => b.closed), feedSources()[market] || 'binance');
   const lv = levels(h1, price, atr);
   const fb = fib(h1, price);
   const traps = wickTraps(m15);
