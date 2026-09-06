@@ -236,6 +236,10 @@ if (hot.enabled !== false && !settings.muted && hotDue) {
   } catch (e) {
     console.error('[hot] sweep failed:', e.message);
   }
+} else if (hot.enabled !== false && !settings.muted) {
+  // Say so. A silent skip and a crash look identical in a log you only read
+  // when the alarm did not go off.
+  console.log(`[hot] skipped — the ${new Date(state.hotHour || 0).toISOString().slice(11, 16)} hour was already swept`);
 }
 
 // Keep the dedupe map from growing forever.
