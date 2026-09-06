@@ -16,6 +16,7 @@ import { VolatilityScanner } from './src/volatility.js';
 import { Screener } from './src/screener.js';
 import { IgnitionScanner } from './src/ignition.js';
 import { coinReport } from './src/coinreport.js';
+import { hotSweep, hotMessage, HOT_DEFAULTS } from './src/hotwatch.js';
 import { refresh as refreshLeverage, loaded as levLoaded, sourceName as levSourceName, setOverrides } from './src/leverage.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -89,6 +90,16 @@ feed.on('error', (id, error) => broadcast('werror', { id, error }));
 feed.on('status', (market, status) => broadcast('status', { market, status }));
 feed.on('trend', () => broadcast('watches', feed.snapshot()));
 
+// Log it, push it to every open tab, deliver it to the phone. Both the
+// per-watch signals and the market-wide sweeps end up here.
+async function announce(entry, msg) {
+  store.pushLog(entry);
+  broadcast('alert', entry);
+  const res = await dispatch(msg, store.get().pushSubs, ep => store.removeSub(ep));
+  console.log(`[${entry.kind}] ${entry.symbol}${entry.interval ? ' ' + entry.interval : ''} →`, res);
+  return res;
+}
+
 feed.on('signal', async (kind, watch, a) => {
   const s = store.get().settings;
   if (s.muted) return;
@@ -103,12 +114,64 @@ feed.on('signal', async (kind, watch, a) => {
     side: a.position?.side || a.forecast?.side || a.justClosed?.side || null,
     detail: kind === 'ENTRY' ? a.position : kind === 'EXIT' ? a.justClosed : kind === 'LOWVOL' ? a.vol : a.forecast
   };
-  store.pushLog(entry);
-  broadcast('alert', entry);
-
-  const res = await dispatch(msg, store.get().pushSubs, ep => store.removeSub(ep));
-  console.log(`[${kind}] ${watch.symbol} ${watch.interval} →`, res);
+  await announce(entry, msg);
 });
+
+// ─── hot hours: the market-wide wake-up watch ───
+//
+// Fires a few minutes after each hourly close, because the trigger is a CLOSED
+// hour — reading a forming candle would alarm on the first violent minute and
+// take it back twenty minutes later.
+//
+// One alert per coin per wake-up: the trigger already requires six calm hours
+// first, so a coin cannot re-fire while it runs, and the cooldown covers the
+// case where it goes quiet and pops again the same afternoon.
+const hotSeen = new Map();
+const HOT_COOLDOWN = 6 * 60 * 60 * 1000;
+let lastHotSweep = null, lastHotHour = null;
+
+function startHotWatch() {
+  const tick = async () => {
+    const s = store.get().settings;
+    const cfg = { ...HOT_DEFAULTS, ...(s.hotHours || {}) };
+    if (cfg.enabled === false || s.muted) return;
+
+    const hour = Math.floor(Date.now() / 3600000) * 3600000;
+    if (lastHotHour === hour) return;                       // already done this hour
+    if (Date.now() - hour < 2 * 60 * 1000) return;          // let the close settle
+    lastHotHour = hour;
+
+    let sweep;
+    try { sweep = await hotSweep(cfg); }
+    catch (e) { return console.error('[hot] sweep failed:', e.message); }
+    lastHotSweep = sweep;
+
+    const first = hotSeen.size === 0 && !store.get().log.some(l => l.kind === 'HOTHOURS');
+    for (const c of sweep.confirmed) {
+      if (c.grade === 'C') continue;
+      if ((cfg.alertOn || 'AB') === 'A' && c.grade !== 'A') continue;
+      const seen = hotSeen.get(c.symbol);
+      if (seen && Date.now() - seen < HOT_COOLDOWN) continue;
+      hotSeen.set(c.symbol, Date.now());
+      if (first) continue;               // seed on the first sweep, don't blast the board
+
+      const msg = hotMessage(c);
+      await announce({
+        kind: 'HOTHOURS', id: `${c.market}:${c.symbol}:1h`,
+        symbol: c.symbol, interval: '1h', market: c.market,
+        title: msg.title, body: msg.body, priority: msg.priority,
+        side: c.report?.plan?.side || null,
+        detail: { grade: c.grade, why: c.why, ratio: c.ratio, volX: c.volX, plan: c.report?.plan || null },
+        at: Date.now()
+      }, msg);
+    }
+    for (const [k, t] of hotSeen) if (Date.now() - t > HOT_COOLDOWN) hotSeen.delete(k);
+    console.log(`[hot] ${sweep.scanned} coins, ${sweep.hits.length} woke up, ` +
+      `${sweep.confirmed.filter(c => c.grade !== 'C').length} worth an alarm${first ? ' — first sweep, seeded silently' : ''}`);
+  };
+  setInterval(tick, 60 * 1000).unref();
+  setTimeout(tick, 20000);
+}
 
 // A watched coin that stops moving can't reach TP — worth knowing before you
 // sit through it. Requires two consecutive flat reads so a quiet patch mid-scan
@@ -325,13 +388,34 @@ app.get('/api/ignition', async (req, res) => {
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
+// What the hot-hours watch is looking at right now — the same sweep the alarm
+// fires from, so the board and the alarm can never disagree.
+app.get('/api/hothours', async (req, res) => {
+  try {
+    const cfg = { ...HOT_DEFAULTS, ...(store.get().settings.hotHours || {}) };
+    // Only sweep on an explicit refresh. The hourly watch fills this in on
+    // its own, and opening the board should never cost 200 requests.
+    if (req.query.fresh === '1') lastHotSweep = await hotSweep(cfg);
+    const d = lastHotSweep;
+    if (!d) return res.json({ at: null, market: cfg.market, pending: true, confirmed: [], hits: [] });
+    res.json({
+      at: d.at, market: d.market, scanned: d.scanned,
+      confirmed: d.confirmed.map(c => ({ ...c, report: c.report ? { plan: c.report.plan, volatility: { ...c.report.volatility, profile: undefined }, liquidity: c.report.liquidity } : null })),
+      hits: d.hits.slice(0, 30)
+    });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
 // One coin, everything: liquidity, volatility in its own units, trend on six
 // timeframes, levels, fib, sweeps, order flow — and a side, or a refusal.
 app.get('/api/coin', async (req, res) => {
   try {
     const market = req.query.market === 'spot' ? 'spot' : 'futures';
     const symbol = (req.query.symbol || '').trim().toUpperCase();
-    if (!/^[A-Z0-9]{4,20}$/.test(symbol)) return res.status(400).json({ error: 'symbol required' });
+    // Binance lists perps named 龙虾USDT and 牛来USDT, so this cannot be an
+    // A-Z test — it only has to reject what would break a URL.
+    if (symbol.length < 4 || symbol.length > 24 || /[\s/?&#]/.test(symbol))
+      return res.status(400).json({ error: 'symbol required' });
     res.json(await coinReport(market, symbol));
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
@@ -410,6 +494,7 @@ server.listen(PORT, async () => {
   feed.startWatchdog();
   feed.startTrendWatch();
   startLowVolWatch();
+  startHotWatch();
 
   // Warm the board so the first browser request is served from cache instead of
   // waiting on a full market scan behind the tunnel.

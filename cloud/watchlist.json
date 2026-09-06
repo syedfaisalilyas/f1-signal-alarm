@@ -51,6 +51,18 @@
       "alertOn": "A",
       "maxLev": 25,
       "bankPct": 50
+    },
+    "hotHours": {
+      "enabled": true,
+      "market": "futures",
+      "minQuoteVol": 5000000,
+      "minDailyPct": 15,
+      "ratio": 5,
+      "volX": 2,
+      "calm": 1.3,
+      "maxRunPct": 40,
+      "confirm": 6,
+      "alertOn": "AB"
     }
   }
 }

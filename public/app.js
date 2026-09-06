@@ -897,7 +897,7 @@ function onAlert(entry) {
   prependLog(entry);
   const card = document.getElementById('c_' + cssId(entry.id));
   if (card) { card.classList.remove('pulse'); void card.offsetWidth; card.classList.add('pulse'); }
-  if (entry.kind === 'ENTRY' || (entry.kind === 'EXIT' && entry.priority === 5)) playAlarm();
+  if (entry.kind === 'ENTRY' || entry.kind === 'HOTHOURS' || (entry.kind === 'EXIT' && entry.priority === 5)) playAlarm();
   else beep();
   if (Notification.permission === 'granted') {
     new Notification(entry.title, { body: entry.body, tag: entry.id + entry.kind, renotify: true });
@@ -927,11 +927,24 @@ function volClass(v, tf) {
 }
 const vpct = v => v === null || v === undefined ? '—' : v.toFixed(2) + '%';
 
+// Which coins the hot-hours alarm has flagged this hour. Read-only — the
+// hourly watch fills the sweep in, this never triggers one.
+let hotFlags = new Map();
+async function loadHotFlags() {
+  try {
+    const d = await apiJson('/api/hothours');
+    hotFlags = new Map((d.confirmed || []).filter(c => c.grade !== 'C').map(c => [c.symbol, c]));
+  } catch { /* leave the last set in place */ }
+}
+
 async function loadVol() {
   const market = $('#volMarket').value, limit = $('#volLimit').value;
   $('#volFoot').textContent = 'scanning…';
   try {
-    const d = await apiJson(`/api/volatility?market=${market}&limit=${limit}`);
+    const [d] = await Promise.all([
+      apiJson(`/api/volatility?market=${market}&limit=${limit}`),
+      loadHotFlags()
+    ]);
     if (d.error) throw new Error(d.error);
     volData = d.rows;
     renderVol();
@@ -955,13 +968,15 @@ function renderVol() {
 
 function volRow(r, isLookup) {
   const n = el('div', 'volrow body' + (r.pinned ? ' pin' : '') + (isLookup ? ' pinlookup' : ''),
-    `<span class="vsym">${r.symbol}${r.pinned ? '<span class="star">⭐</span>' : ''}</span>
+    `<span class="vsym">${r.symbol}${r.pinned ? '<span class="star">⭐</span>' : ''}${hotFlags.has(r.symbol) ? '<span class="hotflag">🔥</span>' : ''}</span>
      <span class="vnum ${volClass(r.vol5m, 'vol5m')}">${vpct(r.vol5m)}</span>
      <span class="vnum ${volClass(r.vol1h, 'vol1h')}">${vpct(r.vol1h)}</span>
      <span class="vnum ${volClass(r.vol1d, 'vol1d')}">${vpct(r.vol1d)}</span>
      <button class="vmore" title="Full report — trend, levels, flow, and whether there is a trade in it">⋯</button>`);
+  const hot = hotFlags.get(r.symbol);
   n.title = `24h volume $${(r.quoteVol / 1e6).toFixed(1)}M · change ${r.changePct?.toFixed(2)}%` +
-            (r.avg5m != null ? ` · avg 5m move ${r.avg5m.toFixed(2)}%` : '');
+            (r.avg5m != null ? ` · avg 5m move ${r.avg5m.toFixed(2)}%` : '') +
+            (hot ? `\n🔥 hours woke up — ${hot.ratio}× its normal hour on ${hot.volX}× volume · grade ${hot.grade}: ${hot.why}` : '');
   n.querySelector('.vsym').onclick = () => addWatch({ market: r.market, symbol: r.symbol });
   n.querySelector('.vmore').onclick = e => { e.stopPropagation(); openCoin(r.market, r.symbol); };
   return n;

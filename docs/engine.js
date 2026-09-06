@@ -19,6 +19,7 @@ import { VolatilityScanner } from './src/volatility.js';
 import { Screener } from './src/screener.js';
 import { IgnitionScanner } from './src/ignition.js';
 import { coinReport } from './src/coinreport.js';
+import { hotSweep, hotMessage, HOT_DEFAULTS } from './src/hotwatch.js';
 import { hydrate as hydrateLeverage, setOverrides } from './src/leverage.js';
 import { buildMessage } from './src/notify.js';
 import { filterTrades, aggregate, coverage } from './src/history.js';
@@ -129,6 +130,57 @@ feed.on('signal', (kind, watch, a) => {
   save();
   broadcast('alert', entry);
 });
+
+// ─── hot hours, in the tab ───
+// The scheduled scanner is what alarms while this page is closed; this is what
+// alarms while it is open. Same module, same thresholds, so the two can never
+// tell you different things about the same coin.
+const hotSeen = new Map();
+const HOT_COOLDOWN = 6 * 60 * 60 * 1000;
+let lastHotSweep = null, lastHotHour = null;
+
+async function hotTick() {
+  const s = state.settings;
+  const cfg = { ...HOT_DEFAULTS, ...(s.hotHours || {}) };
+  if (cfg.enabled === false || s.muted) return;
+
+  const hour = Math.floor(Date.now() / 3600000) * 3600000;
+  if (lastHotHour === hour || Date.now() - hour < 2 * 60 * 1000) return;
+  lastHotHour = hour;
+
+  let sweep;
+  try { sweep = await hotSweep(cfg); }
+  catch (e) { return console.warn('[hot] sweep failed:', e.message); }
+  lastHotSweep = sweep;
+
+  const first = !state.log.some(l => l.kind === 'HOTHOURS');
+  for (const c of sweep.confirmed) {
+    if (c.grade === 'C') continue;
+    if ((cfg.alertOn || 'AB') === 'A' && c.grade !== 'A') continue;
+    const seen = hotSeen.get(c.symbol);
+    if (seen && Date.now() - seen < HOT_COOLDOWN) continue;
+    hotSeen.set(c.symbol, Date.now());
+    if (first) continue;
+
+    const msg = hotMessage(c);
+    const entry = {
+      kind: 'HOTHOURS', id: `${c.market}:${c.symbol}:1h`,
+      symbol: c.symbol, interval: '1h', market: c.market,
+      title: msg.title, body: msg.body, priority: msg.priority,
+      side: c.report?.plan?.side || null,
+      detail: { grade: c.grade, why: c.why, ratio: c.ratio, volX: c.volX, plan: c.report?.plan || null },
+      at: Date.now()
+    };
+    state.log.unshift(entry);
+    if (state.log.length > 300) state.log.length = 300;
+    save();
+    broadcast('alert', entry);
+  }
+  console.log(`[hot] ${sweep.scanned} coins, ${sweep.hits.length} woke up, ` +
+    `${sweep.confirmed.filter(c => c.grade !== 'C').length} worth an alarm${first ? ' — first sweep, seeded silently' : ''}`);
+}
+setInterval(hotTick, 60 * 1000);
+setTimeout(hotTick, 30000);
 
 function slim(a) {
   return {
@@ -251,10 +303,22 @@ async function route(path, params, method, body) {
   }
 
   if (path === '/api/log') return json(state.log.slice(0, 100));
+  if (path === '/api/hothours') {
+    const cfg = { ...HOT_DEFAULTS, ...(state.settings.hotHours || {}) };
+    if (params.get('fresh') === '1') lastHotSweep = await hotSweep(cfg);
+    const d = lastHotSweep;
+    if (!d) return json({ at: null, market: cfg.market, pending: true, confirmed: [], hits: [] });
+    return json({
+      at: d.at, market: d.market, scanned: d.scanned,
+      confirmed: d.confirmed.map(c => ({ ...c, report: c.report ? { plan: c.report.plan, volatility: { ...c.report.volatility, profile: undefined }, liquidity: c.report.liquidity } : null })),
+      hits: d.hits.slice(0, 30)
+    });
+  }
+
   if (path === '/api/coin') {
     const market = params.get('market') === 'spot' ? 'spot' : 'futures';
     const symbol = (params.get('symbol') || '').trim().toUpperCase();
-    if (!/^[A-Z0-9]{4,20}$/.test(symbol)) return json({ error: 'symbol required' }, 400);
+    if (symbol.length < 4 || symbol.length > 24 || /[\s/?&#]/.test(symbol)) return json({ error: 'symbol required' }, 400);
     return json(await coinReport(market, symbol));
   }
   if (path === '/api/volatility') return volatility(params);

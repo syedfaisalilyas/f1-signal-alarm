@@ -373,10 +373,15 @@ function plan({ price, vol, trend, lv, fb, traps, fl, liq, market, symbol }) {
   if (side === 'LONG') {
     entry = nearSup && nearSup.p > price - atr * 2 ? Math.max(nearSup.p, price - atr * 0.5) : price;
     stop = (nearSup ? nearSup.p : price - atr * 2) - atr * 0.6;
+    // A level can sit half a percent away on a coin whose normal hour moves
+    // more than that. A stop inside the noise is not risk control, it is a
+    // donation, so it never comes closer than one hourly ATR.
+    stop = Math.min(stop, entry - atr);
     targets = [nearRes?.p, lv.resistance[1]?.p, fb?.ext?.[0]?.price].filter(v => v > entry).slice(0, 2);
   } else if (side === 'SHORT') {
     entry = nearRes && nearRes.p < price + atr * 2 ? Math.min(nearRes.p, price + atr * 0.5) : price;
     stop = (nearRes ? nearRes.p : price + atr * 2) + atr * 0.6;
+    stop = Math.max(stop, entry + atr);
     targets = [nearSup?.p, lv.support[1]?.p, fb?.ext?.[0]?.price].filter(v => v < entry).slice(0, 2);
   }
   if (entry && stop) {

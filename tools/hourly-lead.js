@@ -22,6 +22,7 @@
 // counting those days would let the signal take credit for yesterday's news.
 
 import '../src/env.js';
+import fs from 'fs';
 import { fetchCandles, fetchCandlesDeep, ticker24h } from '../src/providers.js';
 
 const flag = (n, d) => { const i = process.argv.indexOf(`--${n}`); return i >= 0 ? process.argv[i + 1] : d; };
@@ -200,6 +201,133 @@ async function scan() {
   console.log(`   so ${fired.length - fired.filter(r => r.big).length} of ${fired.length} fires were followed by an ordinary day.\n`);
 }
 
+// ─── what the alarm would actually fire on ───
+// The scan above judges a whole day. An alarm cannot wait for the day to end,
+// so this measures the thing a live sweep can see: the hour where a calm coin
+// first goes wide on real volume. Same 30 days, but the outcome is what the
+// next 24 hours paid from that hour's close — because that is the trade.
+async function trigger() {
+  const days = +flag('days', 30);
+  const N = +flag('coins', 150);
+  const need = (days + 16) * 24;
+  const CACHE = flag('cache', '');
+
+  // Every hour of every coin, reduced to the six numbers any threshold needs.
+  // Cached, because the grid below has to walk them fifty times and refetching
+  // 120 coins for each pass would take an afternoon.
+  let hours = [], coins = 0;
+  if (CACHE && fs.existsSync(CACHE)) {
+    ({ hours, coins } = JSON.parse(fs.readFileSync(CACHE, 'utf8')));
+    process.stderr.write(`[trigger] ${hours.length} hours from cache (${coins} coins)\n`);
+  } else {
+    const src = MARKET === 'futures' ? 'https://fapi.binance.com/fapi/v1' : 'https://api.binance.com/api/v3';
+    const tick = await (await fetch(`${src}/ticker/24hr`)).json();
+    const universe = tick
+      .filter(t => t.symbol.endsWith('USDT') && !/(UP|DOWN|BULL|BEAR)USDT$/.test(t.symbol))
+      .sort((a, b) => +b.quoteVolume - +a.quoteVolume)
+      .slice(0, N).map(t => t.symbol);
+
+    for (const sym of universe) {
+      let bars = null;
+      try { bars = (await fetchCandlesDeep(MARKET, sym, '1h', need)).filter(b => b.closed); } catch { }
+      if (!bars || bars.length < need * 0.6) { process.stderr.write('·'); continue; }
+      coins++;
+      const rng = bars.map(b => b.l > 0 ? (b.h - b.l) / b.l * 100 : 0);
+      const vols = bars.map(b => b.v);
+
+      for (let i = 336; i < bars.length - 24; i++) {
+        const medR = median(rng.slice(i - 336, i));
+        const medV = median(vols.slice(i - 336, i));
+        if (!(medR > 0) || !(medV > 0)) continue;
+
+        const dayR = [];
+        for (let d = 1; d <= 14; d++) {
+          const w = bars.slice(i - d * 24, i - (d - 1) * 24);
+          if (w.length < 20) continue;
+          const hi = Math.max(...w.map(b => b.h)), lo = Math.min(...w.map(b => b.l));
+          if (lo > 0) dayR.push((hi - lo) / lo * 100);
+        }
+
+        const fwd = bars.slice(i + 1, i + 25);
+        const c = bars[i].c;
+        hours.push({
+          sym,
+          rr: rng[i] / medR,
+          vr: vols[i] / medV,
+          calm6: median(rng.slice(i - 6, i)) / medR,
+          calm12: median(rng.slice(i - 12, i)) / medR,
+          daily: median(dayR),
+          up: (Math.max(...fwd.map(b => b.h)) - c) / c * 100,
+          dn: (c - Math.min(...fwd.map(b => b.l))) / c * 100,
+          wasUp: bars[i].c >= bars[i].o
+        });
+      }
+      process.stderr.write('.');
+    }
+    process.stderr.write('\n');
+    if (CACHE) fs.writeFileSync(CACHE, JSON.stringify({ coins, hours }));
+  }
+
+  hours.forEach(h => { h.best = Math.max(h.up, h.dn); });
+  const every = hours;
+  const hit = (h, c) => h.rr >= c.rr && h.vr >= c.vr && h[c.calmKey] < c.calm && h.daily >= c.daily;
+
+  // Which thresholds are worth waking up for? An alarm is only as good as the
+  // gap between its hit rate and the base rate, PRICED IN alarms per day —
+  // a 2× edge that fires seventy times a day is not an edge you can act on.
+  if (has('grid')) {
+    const base = every.filter(h => h.best >= 20).length / every.length * 100;
+    console.log(`\n\n══ tuning the alarm · ${coins} coins · ${days}d · base rate ${base.toFixed(1)}% of hours see a 20% move in the next 24h\n`);
+    console.log('   ratio  vol  calm(6h)  day%    fires    ≥10%    ≥20%   lift   alarms/day');
+    const out = [];
+    for (const rr of [2, 3, 4, 5, 6])
+      for (const vr of [2, 3, 5])
+        for (const calm of [1.3, 1.0, 0.8])
+          for (const daily of [6, 10, 15]) {
+            const c = { rr, vr, calm, daily, calmKey: 'calm6' };
+            const f = every.filter(h => hit(h, c));
+            if (f.length < 30) continue;
+            const p20 = f.filter(h => h.best >= 20).length / f.length * 100;
+            const p10 = f.filter(h => h.best >= 10).length / f.length * 100;
+            out.push({ rr, vr, calm, daily, n: f.length, p10, p20, lift: p20 / base, perDay: f.length / coins / days });
+          }
+    for (const r of out.sort((a, b) => b.lift - a.lift).slice(0, 18))
+      console.log(`   ${String(r.rr).padStart(4)}  ${String(r.vr).padStart(3)}  ${String(r.calm).padStart(7)}  ${String(r.daily).padStart(4)}  ` +
+        `${String(r.n).padStart(6)}  ${r.p10.toFixed(1).padStart(5)}%  ${r.p20.toFixed(1).padStart(5)}%  ${r.lift.toFixed(2)}×  ` +
+        `${(r.perDay * coins).toFixed(1).padStart(6)} across the board`);
+    console.log();
+    return;
+  }
+
+  const MIN_DAILY = +flag('minDaily', 6);
+  const CALM = +flag('calm', 1.3);
+  const VOLX = +flag('volx', 2);
+  const fires = every.filter(h => hit(h, { rr: RATIO, vr: VOLX, calm: CALM, daily: MIN_DAILY, calmKey: 'calm6' }));
+
+  const share = (rows, f) => rows.length ? rows.filter(f).length / rows.length * 100 : 0;
+  const line = (label, rows) => console.log(
+    `   ${label.padEnd(26)} ${String(rows.length).padStart(6)}   ` +
+    `${median(rows.map(r => r.up)).toFixed(1).padStart(6)}%  ${median(rows.map(r => r.dn)).toFixed(1).padStart(6)}%   ` +
+    `${share(rows, r => r.best >= 10).toFixed(1).padStart(5)}%  ${share(rows, r => r.best >= 20).toFixed(1).padStart(5)}%`);
+
+  console.log(`\n\n══ the alarm's own trigger, measured`);
+  console.log(`   ${MARKET} · top ${N} (${coins} usable) · ${days}d · fires when a calm hour goes ${RATIO}× wide on ${VOLX}× volume`);
+  console.log(`   and only on coins whose median day already ranges ${MIN_DAILY}%+\n`);
+  console.log('   from that hour\'s close        hours     med up     med dn    ≥10% move  ≥20%');
+  line('every hour (base rate)', every);
+  line('when the alarm fires', fires);
+  const upFires = fires.filter(r => r.wasUp), dnFires = fires.filter(r => !r.wasUp);
+  console.log();
+  line('…trigger hour closed up', upFires);
+  line('…trigger hour closed down', dnFires);
+  console.log(`\n   the trigger hour's own direction ${
+    Math.abs(median(upFires.map(r => r.up)) - median(dnFires.map(r => r.up))) < 1
+      ? 'tells you nothing about which way the next 24h goes'
+      : 'leans ' + (median(upFires.map(r => r.up)) > median(dnFires.map(r => r.up)) ? 'with it' : 'against it')}`);
+  console.log(`   it fires ${(fires.length / Math.max(1, every.length) * 100).toFixed(1)}% of all hours — ` +
+    `about ${(fires.length / Math.max(1, coins) / days).toFixed(1)} alarms per coin per day\n`);
+}
+
 // day roll-up that also knows whether the day is complete (scan needs that)
 function days2(bars) {
   const m = new Map();
@@ -217,6 +345,7 @@ function days2(bars) {
 }
 
 const symbols = process.argv.slice(2).filter(a => /^[A-Z0-9]+USDT$/i.test(a)).map(s => s.toUpperCase());
-if (has('scan')) await scan();
+if (has('trigger')) await trigger();
+else if (has('scan')) await scan();
 else if (symbols.length) for (const s of symbols) await caseStudy(s);
-else console.log('usage: node tools/hourly-lead.js SYMBOLUSDT [...]   |   node tools/hourly-lead.js --scan --days 30');
+else console.log('usage: node tools/hourly-lead.js SYMBOLUSDT [...]  |  --scan --days 30  |  --trigger --days 30');

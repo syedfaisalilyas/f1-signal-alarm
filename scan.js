@@ -14,6 +14,7 @@ import path from 'path';
 import { fetchCandles, feedSources } from './src/providers.js';
 import { analyze } from './src/strategy.js';
 import { scanUniverse } from './src/ignition.js';
+import { hotSweep, hotMessage } from './src/hotwatch.js';
 import { buildMessage, dispatch, initPush } from './src/notify.js';
 import { refresh as refreshLeverage, dump as leverageDump } from './src/leverage.js';
 
@@ -191,16 +192,64 @@ if (ig.enabled !== false && !settings.muted) {
   }
 }
 
+// ─── hot hours ───
+// The other market-wide watch, and the one that answers "tell me when a coin
+// wakes up". It runs once an hour rather than every five minutes, because its
+// trigger is a CLOSED hourly candle — asking again at :05 and :10 would only
+// re-read the same bar.
+const hot = settings.hotHours || {};
+state.hotFired ||= {};
+const hourNow = Math.floor(Date.now() / 3600000) * 3600000;
+const hotDue = state.hotHour !== hourNow && Date.now() - hourNow > 2 * 60 * 1000;
+
+if (hot.enabled !== false && !settings.muted && hotDue) {
+  const hotFirstRun = !state.hotHour;
+  state.hotHour = hourNow;
+  try {
+    const sweep = await hotSweep(hot);
+    let sent = 0;
+    for (const c of sweep.confirmed) {
+      if (c.grade === 'C') continue;
+      if ((hot.alertOn || 'AB') === 'A' && c.grade !== 'A') continue;
+      // One per coin per wake-up. The six-calm-hours rule already stops a
+      // running coin re-firing; this covers the coin that naps and pops again.
+      const seen = state.hotFired[c.symbol];
+      if (seen && Date.now() - seen < 6 * 60 * 60 * 1000) continue;
+      state.hotFired[c.symbol] = Date.now();
+      if (hotFirstRun) continue;
+
+      const msg = hotMessage(c);
+      state.log.unshift({
+        kind: 'HOTHOURS', id: `${c.market}:${c.symbol}:1h`,
+        symbol: c.symbol, interval: '1h', market: c.market,
+        title: msg.title, body: msg.body, priority: msg.priority,
+        side: c.report?.plan?.side || null,
+        detail: { grade: c.grade, why: c.why, ratio: c.ratio, volX: c.volX, plan: c.report?.plan || null },
+        at: Date.now()
+      });
+      const res = await dispatch(msg, [], () => {});
+      sent++;
+      console.log(`[HOTHOURS] ${c.symbol} grade ${c.grade} →`, JSON.stringify(res));
+    }
+    console.log(`[hot] ${sweep.scanned} coins, ${sweep.hits.length} woke up, ${sent} alert(s)` +
+      (hotFirstRun ? ' — first run, seeded silently' : ''));
+  } catch (e) {
+    console.error('[hot] sweep failed:', e.message);
+  }
+}
+
 // Keep the dedupe map from growing forever.
 const igCutoff = Date.now() - 24 * 60 * 60 * 1000;
 for (const [k, t] of Object.entries(state.ignited)) if (t < igCutoff) delete state.ignited[k];
+for (const [k, t] of Object.entries(state.hotFired)) if (t < igCutoff) delete state.hotFired[k];
 
 if (state.log.length > 300) state.log.length = 300;
 state.lastRun = Date.now();
 
 // The watchlist is not written back — main owns it.
 fs.writeFileSync(STATE, JSON.stringify(
-  { marks: state.marks, ignited: state.ignited, log: state.log, lastRun: state.lastRun }, null, 2));
+  { marks: state.marks, ignited: state.ignited, hotFired: state.hotFired, hotHour: state.hotHour,
+    log: state.log, lastRun: state.lastRun }, null, 2));
 fs.writeFileSync(SNAPSHOT, JSON.stringify({
   at: state.lastRun,
   sources: feedSources(),
