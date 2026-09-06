@@ -1,0 +1,282 @@
+//@version=5
+indicator("F1 LEVELS — what the report draws", shorttitle="F1 LEVELS", overlay=true,
+     max_labels_count=500, max_lines_count=500, max_boxes_count=500, max_bars_back=1000)
+
+// ════════════════════════════════════════════════════════════════════════
+//  The chart half of the coin report.
+//
+//  The app's ⋯ panel prints support, resistance, the volume shelf, the fib of
+//  the live swing and the sweeps that trapped somebody. A TradingView link can
+//  only carry a symbol and a timeframe, so it cannot hand any of that over.
+//  This draws the same five things natively instead: add it once, and every
+//  chart you open from the app already has them on it.
+//
+//  The rules are ported from src/coinreport.js, not reinvented — same pivot
+//  window, same cluster tolerance, same profile length, same sweep test. Two
+//  differences are unavoidable and worth knowing:
+//
+//    · Pine recomputes from your chart's own candles, so a level can sit a
+//      tick from the number in the panel. It is the same level.
+//    · The sweep test runs on whatever timeframe you are looking at. The panel
+//      always reads it on 15m, so on a 1h chart you will see fewer, larger
+//      sweeps than the panel lists.
+//
+//  Everything is off by default except the levels themselves — turn on what
+//  you actually read, or the chart becomes unreadable.
+// ════════════════════════════════════════════════════════════════════════
+
+// ─────────────────────────── ① support & resistance ───────────────────────
+gL = "① Support & resistance"
+showLevels = input.bool(true,  "Draw the zones",              group=gL)
+pivLeft    = input.int(3,      "Pivot, bars either side",     minval=1, maxval=10, group=gL, tooltip="A swing needs this many lower highs on both sides to count. 3 is what the report uses.")
+lookback   = input.int(320,    "Remember pivots for (bars)",  minval=50, group=gL, tooltip="Older swings stop mattering. 320 bars is about a fortnight on 1h.")
+maxEach    = input.int(3,      "Zones each side",             minval=1, maxval=6, group=gL)
+minTouch   = input.int(1,      "Only zones touched at least", minval=1, maxval=10, group=gL, tooltip="A level tagged four times is worth more than a one-off spike. Raise this to keep only the ones price keeps respecting.")
+supCol     = input.color(color.new(#26d07c, 82), "Support",   group=gL, inline="c")
+resCol     = input.color(color.new(#ff5470, 82), "Resistance", group=gL, inline="c")
+
+// ─────────────────────────── ② volume shelf ───────────────────────────────
+gV = "② Volume shelf"
+showVP  = input.bool(true, "Draw POC and the value area", group=gV, tooltip="Price stalls where volume was done and slices through where it was not. The POC is the busiest price of the window.")
+vpLen   = input.int(200,   "Profile length (bars)", minval=30, maxval=500, group=gV)
+vpRows  = input.int(30,    "Rows",                  minval=10, maxval=100, group=gV)
+vaPct   = input.float(70,  "Value area %",          minval=50, maxval=95, step=5, group=gV)
+pocCol  = input.color(#ffb02e, "POC", group=gV, inline="v")
+vaCol   = input.color(color.new(#4aa8ff, 90), "Value area", group=gV, inline="v")
+
+// ─────────────────────────── ③ fibonacci ──────────────────────────────────
+gF = "③ Fibonacci"
+showFib = input.bool(true, "Draw the retracement",    group=gF)
+fibLen  = input.int(240,   "Find the leg within (bars)", minval=30, group=gF, tooltip="The highest high and lowest low in this window. Whichever came LAST is the end of the leg, so the fib is drawn in the direction price actually travelled.")
+showExt = input.bool(false, "…and the 1.272 / 1.618 extensions", group=gF)
+fibCol  = input.color(color.new(#8b9bb4, 30), "Levels", group=gF, inline="f")
+pocketCol = input.color(color.new(#ffb02e, 88), "0.618 pocket", group=gF, inline="f")
+
+// ─────────────────────────── ④ wick traps ─────────────────────────────────
+gW = "④ Wick traps"
+showWick = input.bool(true, "Mark stop runs",  group=gW, tooltip="A candle that takes out the last 20 bars' extreme on heavy volume and closes back inside. Somebody's stops were just filled at the worst price.")
+wickMin  = input.float(0.55, "Wick / range, at least", minval=0.3, maxval=0.9, step=0.05, group=gW)
+wickVol  = input.float(1.5,  "…on volume (× 20-bar average)", minval=1, step=0.1, group=gW)
+
+// ─────────────────────────── ⑤ the alarm's own trigger ────────────────────
+gH = "⑤ Hot hour"
+showHot = input.bool(true, "Mark the hour the coin woke up", group=gH, tooltip="The exact trigger the phone alarm fires on: an hour this many times wider than the coin's own normal hour, on volume, after six quiet ones. On a chart below 1h it paints across the whole hour.")
+hotRatio = input.float(5.0, "Hour (× its own median hour)", minval=1.5, step=0.5, group=gH)
+hotVolX  = input.float(2.0, "…on volume (× median hour)",   minval=1, step=0.5, group=gH)
+hotCalm  = input.float(1.3, "…after six hours under (× median)", minval=0.5, step=0.1, group=gH)
+
+// ══════════════════════════════════════════════════════════════════════════
+
+atr = ta.atr(14)
+// Two pivots inside this distance are the same level being retested, not two
+// levels. Half an ATR, floored at 0.4% so it never collapses on a quiet coin.
+tol = math.max(atr * 0.5, close * 0.004)
+
+var array<float> lvlPx  = array.new_float()
+var array<int>   lvlHit = array.new_int()
+var array<int>   lvlAt  = array.new_int()
+
+// A new swing either joins the nearest zone — moving its centre and raising
+// its touch count — or opens a new one.
+addPivot(float p) =>
+    int idx = -1
+    if array.size(lvlPx) > 0
+        for i = 0 to array.size(lvlPx) - 1
+            if math.abs(array.get(lvlPx, i) - p) <= tol
+                idx := i
+                break
+    if idx >= 0
+        int n = array.get(lvlHit, idx) + 1
+        array.set(lvlPx,  idx, (array.get(lvlPx, idx) * (n - 1) + p) / n)
+        array.set(lvlHit, idx, n)
+        array.set(lvlAt,  idx, bar_index)
+    else
+        array.push(lvlPx,  p)
+        array.push(lvlHit, 1)
+        array.push(lvlAt,  bar_index)
+
+ph = ta.pivothigh(high, pivLeft, pivLeft)
+pl = ta.pivotlow(low,  pivLeft, pivLeft)
+if not na(ph)
+    addPivot(ph)
+if not na(pl)
+    addPivot(pl)
+
+// Forget zones nothing has touched inside the window, or the chart ends up
+// carrying every swing the coin ever made.
+if array.size(lvlPx) > 0
+    int k = array.size(lvlPx) - 1
+    while k >= 0
+        if bar_index - array.get(lvlAt, k) > lookback
+            array.remove(lvlPx,  k)
+            array.remove(lvlHit, k)
+            array.remove(lvlAt,  k)
+        k := k - 1
+
+var array<box>   drawnBox = array.new_box()
+var array<label> drawnLbl = array.new_label()
+var array<line>  drawnLn  = array.new_line()
+
+wipe() =>
+    while array.size(drawnBox) > 0
+        box.delete(array.pop(drawnBox))
+    while array.size(drawnLbl) > 0
+        label.delete(array.pop(drawnLbl))
+    while array.size(drawnLn) > 0
+        line.delete(array.pop(drawnLn))
+
+// One horizontal band, extended right, labelled with how often it was hit.
+zone(float px, int hits, color col, string side) =>
+    b = box.new(math.max(0, bar_index - lookback), px + tol / 2, bar_index, px - tol / 2,
+         border_color=color.new(col, 40), bgcolor=col, extend=extend.right)
+    array.push(drawnBox, b)
+    l = label.new(bar_index, px, side + "  " + str.tostring(px, format.mintick) +
+         "   " + str.tostring(hits) + (hits == 1 ? " touch" : " touches"),
+         style=label.style_label_left, color=color.new(col, 100),
+         textcolor=color.new(col, 0), size=size.small)
+    array.push(drawnLbl, l)
+
+fibLine(float px, string txt, color col, int style) =>
+    l = line.new(math.max(0, bar_index - fibLen), px, bar_index, px, extend=extend.right,
+         color=col, style=style, width=1)
+    array.push(drawnLn, l)
+    t = label.new(bar_index, px, txt, style=label.style_label_left,
+         color=color.new(col, 100), textcolor=col, size=size.tiny)
+    array.push(drawnLbl, t)
+
+if barstate.islast
+    wipe()
+
+    // ── ① the nearest zones either side of price ──
+    if showLevels and array.size(lvlPx) > 0
+        for side = 0 to 1
+            float taken = side == 0 ? 1e12 : -1e12
+            for n = 1 to maxEach
+                int best = -1
+                float bestPx = na
+                for i = 0 to array.size(lvlPx) - 1
+                    float p = array.get(lvlPx, i)
+                    if array.get(lvlHit, i) < minTouch
+                        continue
+                    bool ok = side == 0 ? (p < close and p < taken) : (p > close and p > taken)
+                    if ok and (na(bestPx) or (side == 0 ? p > bestPx : p < bestPx))
+                        best := i
+                        bestPx := p
+                if best >= 0
+                    zone(bestPx, array.get(lvlHit, best), side == 0 ? supCol : resCol,
+                         side == 0 ? "support" : "resistance")
+                    taken := bestPx
+
+    // ── ② the busiest price of the window, and the area around it ──
+    if showVP
+        // `for i = 0 to -1` counts DOWNWARDS in Pine rather than skipping, so the
+        // window can never be shorter than the chart.
+        int vpN = math.max(2, math.min(vpLen, bar_index))
+        float hi = high
+        float lo = low
+        for i = 0 to vpN - 1
+            hi := math.max(hi, high[i])
+            lo := math.min(lo, low[i])
+        float step = (hi - lo) / vpRows
+        if step > 0
+            rows = array.new_float(vpRows, 0.0)
+            for i = 0 to vpN - 1
+                int r1 = math.max(0, math.min(vpRows - 1, int(math.floor((low[i]  - lo) / step))))
+                int r2 = math.max(0, math.min(vpRows - 1, int(math.floor((high[i] - lo) / step))))
+                float per = volume[i] / (r2 - r1 + 1)
+                for r = r1 to r2
+                    array.set(rows, r, array.get(rows, r) + per)
+
+            int poc = 0
+            float pocV = 0.0
+            float total = 0.0
+            for r = 0 to vpRows - 1
+                float v = array.get(rows, r)
+                total += v
+                if v > pocV
+                    pocV := v
+                    poc  := r
+            // Grow out from the POC, always taking the fatter neighbour, until
+            // the requested share of the volume is inside.
+            int up = poc
+            int dn = poc
+            float acc = pocV
+            while acc < total * vaPct / 100 and (dn > 0 or up < vpRows - 1)
+                float vUp = up < vpRows - 1 ? array.get(rows, up + 1) : -1
+                float vDn = dn > 0 ? array.get(rows, dn - 1) : -1
+                if vUp >= vDn
+                    up += 1
+                    acc += vUp
+                else
+                    dn -= 1
+                    acc += vDn
+            float pocPx = lo + (poc + 0.5) * step
+            float vah   = lo + (up  + 1.0) * step
+            float val   = lo + dn * step
+            vb = box.new(math.max(0, bar_index - vpLen), vah, bar_index, val,
+                 border_color=color.new(vaCol, 70), bgcolor=vaCol, extend=extend.right)
+            array.push(drawnBox, vb)
+            fibLine(pocPx, "POC " + str.tostring(pocPx, format.mintick), pocCol, line.style_solid)
+
+    // ── ③ the leg everyone is drawing fibs on ──
+    if showFib
+        float hh = ta.highest(high, fibLen)
+        float ll = ta.lowest(low, fibLen)
+        int hhAgo = ta.highestbars(high, fibLen)
+        int llAgo = ta.lowestbars(low, fibLen)
+        // The extreme that came LAST ends the leg: a high after a low means
+        // price travelled up, so the retracement is measured down from it.
+        bool legUp = hhAgo > llAgo
+        float span = hh - ll
+        if span > 0
+            for r in array.from(0.236, 0.382, 0.5, 0.618, 0.786)
+                float px = legUp ? hh - span * r : ll + span * r
+                fibLine(px, str.tostring(r), r == 0.618 ? pocCol : fibCol,
+                     r == 0.618 ? line.style_solid : line.style_dotted)
+            // the pocket continuation entries live in
+            float p1 = legUp ? hh - span * 0.5   : ll + span * 0.5
+            float p2 = legUp ? hh - span * 0.66  : ll + span * 0.66
+            pb = box.new(math.max(0, bar_index - fibLen), math.max(p1, p2), bar_index, math.min(p1, p2),
+                 border_color=color.new(pocketCol, 60), bgcolor=pocketCol, extend=extend.right)
+            array.push(drawnBox, pb)
+            if showExt
+                for r in array.from(1.272, 1.618)
+                    float px = legUp ? ll + span * r : hh - span * r
+                    fibLine(px, str.tostring(r) + " ext", fibCol, line.style_dashed)
+
+// ─────────────────────────── ④ stop runs ──────────────────────────────────
+rng   = high - low
+upW   = high - math.max(open, close)
+dnW   = math.min(open, close) - low
+prevH = ta.highest(high, 20)[1]
+prevL = ta.lowest(low, 20)[1]
+heavy = volume >= ta.sma(volume, 20) * wickVol
+bearTrap = showWick and rng > 0 and upW / rng >= wickMin and high > prevH and close < prevH and heavy
+bullTrap = showWick and rng > 0 and dnW / rng >= wickMin and low  < prevL and close > prevL and heavy
+
+plotshape(bearTrap, title="Longs trapped",  style=shape.triangledown, location=location.abovebar,
+     color=#ff5470, size=size.tiny, text="trap")
+plotshape(bullTrap, title="Shorts trapped", style=shape.triangleup,   location=location.belowbar,
+     color=#26d07c, size=size.tiny, text="trap")
+
+// ─────────────────────────── ⑤ the hot hour ───────────────────────────────
+// The alarm's own trigger, so the candle that woke the phone up is visible on
+// the chart. Median rather than average: one 40% hour drags an average up for
+// a fortnight and nothing ever reads as wide again.
+hotRead() =>
+    float r = low > 0 ? (high - low) / low * 100 : 0.0
+    float medR  = ta.percentile_nearest_rank(r, 336, 50)
+    float medV  = ta.percentile_nearest_rank(volume, 336, 50)
+    float calm6 = ta.percentile_nearest_rank(r[1], 6, 50)
+    [r, medR, volume, medV, calm6]
+
+[hR, hMedR, hV, hMedV, hCalm] = request.security(syminfo.tickerid, "60", hotRead())
+hot = showHot and hMedR > 0 and hMedV > 0 and hR / hMedR >= hotRatio and
+      hV / hMedV >= hotVolX and hCalm / hMedR < hotCalm
+
+bgcolor(hot ? color.new(#ffb02e, 88) : na, title="Hot hour")
+plotshape(hot and not hot[1], title="Hours woke up", style=shape.diamond,
+     location=location.top, color=#ffb02e, size=size.tiny, text="woke up")
+
+alertcondition(hot and not hot[1], "F1 — hours woke up",
+     "{{ticker}} just went {{interval}}-wide after a quiet stretch — the hot-hours trigger")

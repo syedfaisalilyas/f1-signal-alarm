@@ -1188,6 +1188,7 @@ function renderCoin(d) {
       <div><h5 class="down">Resistance</h5>${lvlRows(l.resistance, 'resistance')}</div>
     </div>
     <div class="cnote">Volume shelf (POC) at <b>${fmtPx(l.poc)}</b>, ${l.pocDistPct >= 0 ? '+' : ''}${l.pocDistPct}% away — value area ${fmtPx(l.val)} to ${fmtPx(l.vah)}. Price is <b>${l.vsPoc}</b> it.</div>
+    <div class="cnote">To see these on the chart itself, add <b>F1_Levels.pine</b> once on TradingView — same zones, same fib, same sweeps, drawn natively on every symbol you open.</div>
 
     <h4>Fibonacci</h4>
     ${fibHtml}
