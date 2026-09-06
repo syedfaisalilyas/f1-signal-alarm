@@ -49,6 +49,7 @@ export const HOT_DEFAULTS = {
   calm: 1.3,            // the six hours before were under this × median
   calmBars: 6,
   maxRunPct: 40,        // moved this much in 24h already = you are late, not early
+  lookback: 4,          // how many closed hours back a wake-up still counts
   bars: 400,            // ~16 days of hourly candles, one request per coin
   concurrency: 8,
   confirm: 6            // how many candidates get the expensive second stage
@@ -70,51 +71,71 @@ async function mapLimit(items, limit, fn) {
   return out;
 }
 
-// Stage one, and the only part that runs on every coin. Pure, so the same
-// judgement can be replayed over history without a network.
-export function hotStart(row, bars, cfg = HOT_DEFAULTS) {
-  const closed = bars.filter(b => b.closed);
-  if (closed.length < 200) return null;
-  const last = closed.at(-1);
+// One hour, judged. Everything it needs ends at bar `i`, so the same function
+// serves the live read and a walk back through history.
+function judgeHour(row, closed, i, barsAgo, cfg) {
+  const bar = closed[i];
 
   // Baseline stops before the trigger hour — an hour cannot be measured
   // against a normal it is itself part of.
-  const hist = closed.slice(-337, -1);
+  const hist = closed.slice(Math.max(0, i - 336), i);
+  if (hist.length < 100) return null;
   const medR = median(hist.map(rangePct));
   const medV = median(hist.map(b => b.v));
   if (!(medR > 0) || !(medV > 0)) return null;
 
-  const ratio = rangePct(last) / medR;
-  const volX = last.v / medV;
-  const before = closed.slice(-(cfg.calmBars + 1), -1);
+  const ratio = rangePct(bar) / medR;
+  const volX = bar.v / medV;
+  const before = closed.slice(Math.max(0, i - cfg.calmBars), i);
   const calmRatio = median(before.map(rangePct)) / medR;
 
-  // Is this coin a mover at all? A 2× hour on something that ranges 1.5% a day
-  // is 2× of nothing, and there is no trade in it whatever the ratio says.
+  // Is this coin a mover at all? A 5× hour on something that ranges 1.5% a day
+  // is 5× of nothing, and there is no trade in it whatever the ratio says.
   const dayRanges = [];
   for (let d = 1; d <= 14; d++) {
-    const w = closed.slice(closed.length - d * 24, closed.length - (d - 1) * 24);
+    const w = closed.slice(Math.max(0, i + 1 - d * 24), i + 1 - (d - 1) * 24);
     if (w.length < 20) continue;
     const hi = Math.max(...w.map(b => b.h)), lo = Math.min(...w.map(b => b.l));
     if (lo > 0) dayRanges.push((hi - lo) / lo * 100);
   }
   const dailyMed = median(dayRanges);
 
-  const fired = ratio >= cfg.ratio && volX >= cfg.volX && calmRatio < cfg.calm && dailyMed >= cfg.minDailyPct;
-  if (!fired) return null;
+  if (!(ratio >= cfg.ratio && volX >= cfg.volX && calmRatio < cfg.calm && dailyMed >= cfg.minDailyPct)) return null;
 
   return {
     market: cfg.market, symbol: row.symbol,
-    price: last.c, quoteVol: row.quoteVol, changePct: row.changePct,
-    hourAt: last.t,
-    hourRangePct: r2(rangePct(last)), medianHourPct: r2(medR),
+    price: closed.at(-1).c, quoteVol: row.quoteVol, changePct: row.changePct,
+    hourAt: bar.t, barsAgo,
+    hourRangePct: r2(rangePct(bar)), medianHourPct: r2(medR),
     ratio: r2(ratio), volX: r2(volX), calmRatio: r2(calmRatio),
-    hourChgPct: r2(last.o > 0 ? (last.c - last.o) / last.o * 100 : 0),
+    hourChgPct: r2(bar.o > 0 ? (bar.c - bar.o) / bar.o * 100 : 0),
     dailyMedianPct: r2(dailyMed),
     // Woken up, or already gone? The alarm is for the first case.
     late: Math.abs(row.changePct) >= cfg.maxRunPct,
     strength: r2(ratio * Math.min(volX, 6))
   };
+}
+
+// Stage one, and the only part that runs on every coin. Pure, so the same
+// judgement can be replayed over history without a network.
+//
+// It checks the last few closed hours, not only the newest, because the thing
+// that runs it is not reliable. GitHub takes a `*/5 * * * *` cron and actually
+// wakes the scanner up every two to three hours, so a watch that only ever
+// read the hour just gone would sleep through most of what it is for. Walking
+// back a few hours turns a late runner into a late alert instead of no alert —
+// the same trade scan.js already makes for entries. The newest wake-up wins,
+// and the calm-hours rule means a coin that has been running since cannot
+// re-fire on the hours after its own start.
+export function hotStart(row, bars, cfg = HOT_DEFAULTS) {
+  const closed = bars.filter(b => b.closed);
+  if (closed.length < 200) return null;
+  const look = Math.max(1, cfg.lookback ?? 1);
+  for (let back = 0; back < look; back++) {
+    const hit = judgeHour(row, closed, closed.length - 1 - back, back, cfg);
+    if (hit) return hit;
+  }
+  return null;
 }
 
 // Stage two: the report decides whether there is a trade, and the grade says
@@ -160,8 +181,10 @@ export function hotMessage(c) {
   const icon = c.grade === 'A' ? '🔥' : '👀';
   const title = `${icon} HOT HOURS ${c.symbol}${p && p.side !== 'WAIT' ? ' — ' + p.side : ''}`;
 
+  const when = !c.barsAgo ? 'just woke up'
+    : `woke up ${c.barsAgo}h ago (${new Date(c.hourAt).toISOString().slice(11, 16)} UTC)`;
   const lines = [
-    `Its hours just woke up: ${c.hourRangePct}% in one hour, ${c.ratio}× its normal ${c.medianHourPct}%, on ${c.volX}× volume.`,
+    `Its hours ${when}: ${c.hourRangePct}% in one hour, ${c.ratio}× its normal ${c.medianHourPct}%, on ${c.volX}× volume.`,
     `The six hours before were quiet (${c.calmRatio}× normal) — this is the turn, not the middle.`,
     `Typical day for this coin ranges ${c.dailyMedianPct}% · 24h volume $${(c.quoteVol / 1e6).toFixed(1)}M · ${c.changePct >= 0 ? '+' : ''}${c.changePct?.toFixed(1)}% today`,
     ''

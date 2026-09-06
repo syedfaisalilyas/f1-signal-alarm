@@ -62,7 +62,8 @@
       "calm": 1.3,
       "maxRunPct": 40,
       "confirm": 6,
-      "alertOn": "AB"
+      "alertOn": "AB",
+      "lookback": 4
     }
   }
 }
