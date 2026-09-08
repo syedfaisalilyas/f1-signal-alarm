@@ -71,6 +71,15 @@
       "market": "futures",
       "symbol": "FORMUSDT",
       "interval": "3m"
+    },
+    {
+      "id": "futures:PAXGUSDT:5m",
+      "enabled": true,
+      "cfg": {},
+      "addedAt": 1788854229740,
+      "market": "futures",
+      "symbol": "PAXGUSDT",
+      "interval": "5m"
     }
   ],
   "settings": {
