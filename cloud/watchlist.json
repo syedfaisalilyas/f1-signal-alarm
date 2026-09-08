@@ -43,7 +43,7 @@
     "lowVol1h": 1,
     "levOverride": {},
     "ignition": {
-      "enabled": true,
+      "enabled": false,
       "market": "futures",
       "interval": "1h",
       "minQuoteVol": 3000000,
@@ -53,7 +53,7 @@
       "bankPct": 50
     },
     "hotHours": {
-      "enabled": true,
+      "enabled": false,
       "market": "futures",
       "minQuoteVol": 5000000,
       "minDailyPct": 15,
