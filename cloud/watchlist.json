@@ -1,76 +1,49 @@
 {
   "watches": [
     {
-      "id": "futures:BULLAUSDT:3m",
+      "id": "futures:TUTUSDT:3m",
       "enabled": true,
       "cfg": {},
-      "addedAt": 1788854037230,
+      "addedAt": 1787504772866,
       "market": "futures",
-      "symbol": "BULLAUSDT",
+      "symbol": "TUTUSDT",
       "interval": "3m"
     },
     {
-      "id": "futures:MARSCOINUSDT:3m",
+      "id": "futures:TUTUSDT:5m",
       "enabled": true,
       "cfg": {},
-      "addedAt": 1788854037230,
+      "addedAt": 1787504779448,
       "market": "futures",
-      "symbol": "MARSCOINUSDT",
-      "interval": "3m"
-    },
-    {
-      "id": "futures:4USDT:3m",
-      "enabled": true,
-      "cfg": {},
-      "addedAt": 1788854037230,
-      "market": "futures",
-      "symbol": "4USDT",
-      "interval": "3m"
-    },
-    {
-      "id": "futures:BTCUSDT:5m",
-      "enabled": true,
-      "cfg": {},
-      "addedAt": 1788854037230,
-      "market": "futures",
-      "symbol": "BTCUSDT",
+      "symbol": "TUTUSDT",
       "interval": "5m"
     },
     {
-      "id": "futures:COLLECTUSDT:3m",
+      "id": "futures:TUTUSDT:1m",
       "enabled": true,
       "cfg": {},
-      "addedAt": 1788854037230,
+      "addedAt": 1787504955105,
       "market": "futures",
-      "symbol": "COLLECTUSDT",
+      "symbol": "TUTUSDT",
+      "interval": "1m"
+    },
+    {
+      "id": "futures:PROMUSDT:3m",
+      "enabled": true,
+      "cfg": {},
+      "addedAt": 1787559488536,
+      "market": "futures",
+      "symbol": "PROMUSDT",
       "interval": "3m"
     },
     {
-      "id": "futures:WOOUSDT:3m",
+      "id": "futures:PAXGUSDT:5m",
       "enabled": true,
       "cfg": {},
-      "addedAt": 1788854037230,
+      "addedAt": 1788854165587,
       "market": "futures",
-      "symbol": "WOOUSDT",
-      "interval": "3m"
-    },
-    {
-      "id": "futures:SOPHUSDT:3m",
-      "enabled": true,
-      "cfg": {},
-      "addedAt": 1788854037230,
-      "market": "futures",
-      "symbol": "SOPHUSDT",
-      "interval": "3m"
-    },
-    {
-      "id": "futures:FORMUSDT:3m",
-      "enabled": true,
-      "cfg": {},
-      "addedAt": 1788854037230,
-      "market": "futures",
-      "symbol": "FORMUSDT",
-      "interval": "3m"
+      "symbol": "PAXGUSDT",
+      "interval": "5m"
     }
   ],
   "settings": {
@@ -79,27 +52,10 @@
     "lowVol1h": 1,
     "levOverride": {},
     "ignition": {
-      "enabled": false,
-      "market": "futures",
-      "interval": "1h",
-      "minQuoteVol": 3000000,
-      "fresh": 2,
-      "alertOn": "A",
-      "maxLev": 25,
-      "bankPct": 50
+      "enabled": false
     },
     "hotHours": {
-      "enabled": false,
-      "market": "futures",
-      "minQuoteVol": 5000000,
-      "minDailyPct": 15,
-      "ratio": 5,
-      "volX": 2,
-      "calm": 1.3,
-      "maxRunPct": 40,
-      "confirm": 6,
-      "alertOn": "AB",
-      "lookback": 4
+      "enabled": false
     }
   }
 }
