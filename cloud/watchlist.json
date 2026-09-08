@@ -1,40 +1,76 @@
 {
   "watches": [
     {
-      "id": "futures:TUTUSDT:3m",
+      "id": "futures:BULLAUSDT:3m",
       "enabled": true,
       "cfg": {},
-      "addedAt": 1787504772866,
+      "addedAt": 1788854037230,
       "market": "futures",
-      "symbol": "TUTUSDT",
+      "symbol": "BULLAUSDT",
       "interval": "3m"
     },
     {
-      "id": "futures:TUTUSDT:5m",
+      "id": "futures:MARSCOINUSDT:3m",
       "enabled": true,
       "cfg": {},
-      "addedAt": 1787504779448,
+      "addedAt": 1788854037230,
       "market": "futures",
-      "symbol": "TUTUSDT",
+      "symbol": "MARSCOINUSDT",
+      "interval": "3m"
+    },
+    {
+      "id": "futures:4USDT:3m",
+      "enabled": true,
+      "cfg": {},
+      "addedAt": 1788854037230,
+      "market": "futures",
+      "symbol": "4USDT",
+      "interval": "3m"
+    },
+    {
+      "id": "futures:BTCUSDT:5m",
+      "enabled": true,
+      "cfg": {},
+      "addedAt": 1788854037230,
+      "market": "futures",
+      "symbol": "BTCUSDT",
       "interval": "5m"
     },
     {
-      "id": "futures:TUTUSDT:1m",
+      "id": "futures:COLLECTUSDT:3m",
       "enabled": true,
       "cfg": {},
-      "addedAt": 1787504955105,
+      "addedAt": 1788854037230,
       "market": "futures",
-      "symbol": "TUTUSDT",
-      "interval": "1m"
+      "symbol": "COLLECTUSDT",
+      "interval": "3m"
     },
     {
-      "id": "futures:SPKUSDT:5m",
+      "id": "futures:WOOUSDT:3m",
       "enabled": true,
       "cfg": {},
-      "addedAt": 1787517653622,
+      "addedAt": 1788854037230,
       "market": "futures",
-      "symbol": "SPKUSDT",
-      "interval": "5m"
+      "symbol": "WOOUSDT",
+      "interval": "3m"
+    },
+    {
+      "id": "futures:SOPHUSDT:3m",
+      "enabled": true,
+      "cfg": {},
+      "addedAt": 1788854037230,
+      "market": "futures",
+      "symbol": "SOPHUSDT",
+      "interval": "3m"
+    },
+    {
+      "id": "futures:FORMUSDT:3m",
+      "enabled": true,
+      "cfg": {},
+      "addedAt": 1788854037230,
+      "market": "futures",
+      "symbol": "FORMUSDT",
+      "interval": "3m"
     }
   ],
   "settings": {

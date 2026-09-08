@@ -21,6 +21,7 @@ import { refresh as refreshLeverage, loaded as levLoaded, sourceName as levSourc
 import { resolve as resolveInstrument, INSTRUMENTS } from './src/symbols.js';
 import { newsFor, calendar as newsCalendar } from './src/news.js';
 import fs from 'fs';
+import { execFile } from 'child_process';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const app = express();
@@ -263,8 +264,51 @@ function writeCloudWatchlist() {
     };
     fs.mkdirSync(path.dirname(file), { recursive: true });
     fs.writeFileSync(file, JSON.stringify(next, null, 2));
+    pushWatchlist();
   } catch (e) {
     console.warn('[watchlist] could not write cloud/watchlist.json —', e.message);
+  }
+}
+
+// Writing the file is not enough — the scanner runs on GitHub and only sees
+// what is committed. So commit and push it, which needs no token because git
+// already has this machine's credentials.
+//
+// Debounced: adding six coins in a row is one commit, not six. Only ever
+// touches cloud/watchlist.json, so nothing else in the working tree is swept
+// into the commit, and a failure is logged and dropped — losing an alert sync
+// must never take the app down with it.
+const GIT_DEBOUNCE = 8000;
+let pushTimer = null;
+let pushing = false;
+
+const git = (args, cwd = __dirname) => new Promise((resolve, reject) =>
+  execFile('git', args, { cwd, timeout: 25000 }, (err, stdout, stderr) =>
+    err ? reject(new Error((stderr || err.message).trim())) : resolve(stdout.trim())));
+
+function pushWatchlist() {
+  if (process.env.WATCHLIST_AUTOPUSH === 'off') return;
+  clearTimeout(pushTimer);
+  pushTimer = setTimeout(doPush, GIT_DEBOUNCE);
+}
+
+async function doPush() {
+  if (pushing) { pushWatchlist(); return; }
+  pushing = true;
+  try {
+    const dirty = await git(['status', '--porcelain', 'cloud/watchlist.json']);
+    if (!dirty) return;                              // nothing changed
+    const n = store.get().watches.length;
+    await git(['add', 'cloud/watchlist.json']);
+    await git(['commit', '-m', `watchlist: ${n} watch${n === 1 ? '' : 'es'} from the app`,
+               '--only', 'cloud/watchlist.json']);
+    await git(['push', 'origin', 'HEAD:main']);
+    console.log(`[watchlist] pushed — scanner now alerts on ${n} watch${n === 1 ? '' : 'es'}, live within 5 min`);
+  } catch (e) {
+    console.warn('[watchlist] auto-push failed —', e.message.split('\n')[0]);
+    console.warn('[watchlist] the list is written to cloud/watchlist.json; commit it to apply');
+  } finally {
+    pushing = false;
   }
 }
 
