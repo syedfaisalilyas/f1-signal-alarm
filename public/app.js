@@ -1248,6 +1248,29 @@ function renderNews(n) {
     ${heads}`;
 }
 
+function hourStrip(profile) {
+  if (!profile?.length) return '';
+  // Height is the hour's range against this coin's own normal hour, so the
+  // strip reads the same on BTC and on a meme coin. 5× tops it out.
+  const bars = profile.map(h => {
+    const pctH = Math.max(4, Math.min(100, (h.ratio || 0) / 5 * 100));
+    const hot = (h.ratio || 0) >= 2 ? ' hot' : '';
+    const t = new Date(h.t).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+    return `<i class="${h.up ? 'up' : 'down'}${hot}" style="height:${pctH}%" title="${t} · range ${h.rangePct}% (${h.ratio}× normal) · ${pct(h.chgPct || 0)}"></i>`;
+  }).join('');
+  return `<div class="hstrip">${bars}</div>
+    <div class="hstriplbl"><span>48h ago</span><span>now</span></div>
+    <div class="cnote">One bar per hour. Height is that hour's range against this coin's normal hour, green up / red down — bright bars are 2× normal or more.</div>`;
+}
+
+function lvlRows(list, kind) {
+  if (!list?.length) return `<div class="cnote">no clean ${kind} in the last fortnight</div>`;
+  return `<div class="ctable">` + list.map(l =>
+    `<div class="crow"><span class="${kind === 'support' ? 'up' : 'down'}">${fmtPx(l.price)}</span>` +
+    `<span class="dim">${l.distPct >= 0 ? '+' : ''}${l.distPct}%</span>` +
+    `<span class="dim">${l.touches} touch${l.touches === 1 ? '' : 'es'}</span></div>`).join('') + `</div>`;
+}
+
 function renderCoin(d) {
   const v = d.volatility, p = d.plan, l = d.levels, f = d.flow, fb = d.fib, lq = d.liquidity;
   $('#coinTitle').textContent = d.label || d.symbol;
