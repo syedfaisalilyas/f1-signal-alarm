@@ -494,3 +494,66 @@ button.resmore:hover{color:var(--info);background:var(--panel2)}
 .syncbtns{display:flex;gap:8px;margin-top:9px}
 .syncbtns .btn{flex:1}
 #ghToken{width:100%;box-sizing:border-box}
+
+/* ── news: the next release, what it implies, and how the rule has done ── */
+.nxcard{border:1px solid var(--line);border-radius:12px;padding:14px;background:var(--panel2);margin-bottom:6px}
+.nxcard.high{border-color:#5c1d1d;background:linear-gradient(180deg,rgba(220,60,60,.07),transparent 60%)}
+.nxcard.med{border-color:#4a3a1a;background:linear-gradient(180deg,rgba(220,160,50,.06),transparent 60%)}
+.nxhead{display:flex;align-items:center;gap:10px}
+.nxtitle{display:flex;flex-direction:column;gap:2px;line-height:1.35;flex:1;min-width:0}
+.nxtitle .dim{font-size:11px}
+.nxcount{font-size:19px;font-weight:700;color:var(--warn);white-space:nowrap;font-variant-numeric:tabular-nums}
+.nxnums{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin:12px 0 4px}
+.nxnums div{background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:8px 10px}
+.nxnums em{display:block;font-style:normal;font-size:10px;color:var(--faint);text-transform:uppercase;letter-spacing:.05em}
+.nxnums b{font-size:15px}
+
+.nxpred{margin-top:10px;border-top:1px solid var(--line);padding-top:10px}
+.predrow{display:flex;justify-content:space-between;align-items:center;gap:10px;padding:8px 10px;border-radius:8px;
+  background:var(--panel);border:1px solid var(--line);margin-bottom:6px;font-size:12px}
+.predrow.up{border-color:#1d4a2c}.predrow.down{border-color:#5c1d1d}
+.predif{color:var(--dim)}
+.predgo{white-space:nowrap;font-size:13px}
+.predrow.up .predgo b{color:var(--up)}.predrow.down .predgo b{color:var(--down)}
+.predwhy{font-size:11px;color:var(--faint);line-height:1.5;margin-top:8px}
+.conf{display:inline-block;margin-left:6px;padding:1px 6px;border-radius:5px;border:1px solid var(--line);
+  text-transform:uppercase;font-size:9px;letter-spacing:.05em}
+.conf.high{color:var(--up);border-color:#1d4a2c}
+.conf.medium{color:var(--warn);border-color:#4a3a1a}
+.conf.low{color:var(--faint)}
+
+.nxplans{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+@media(max-width:640px){.nxplans{grid-template-columns:1fr}.nxnums{grid-template-columns:1fr 1fr}}
+.nxplan{border:1px solid var(--line);border-radius:10px;padding:11px;background:var(--panel2)}
+.nxplan.up{border-color:#1d4a2c}.nxplan.down{border-color:#5c1d1d}
+.nxplanhead{display:flex;align-items:center;gap:8px;margin-bottom:9px;font-size:11px;line-height:1.35}
+
+.ntrades{display:flex;flex-direction:column;gap:7px}
+.ntrade{border:1px solid var(--line);border-left-width:3px;border-radius:9px;padding:9px 11px;background:var(--panel2)}
+.ntrade.win{border-left-color:var(--up)}
+.ntrade.loss{border-left-color:var(--down)}
+.ntrade.open{border-left-color:var(--warn)}
+.ntrade.skip{border-left-color:var(--faint);opacity:.7}
+.ntop{display:flex;align-items:center;gap:8px;flex-wrap:wrap;font-size:12px}
+.nres{margin-left:auto;font-weight:700;font-variant-numeric:tabular-nums;white-space:nowrap}
+.nmid{font-size:12px;margin-top:5px;font-variant-numeric:tabular-nums}
+.nbot{font-size:10px;margin-top:4px;line-height:1.45}
+
+.ncal{display:flex;flex-direction:column}
+.ncalrow{display:grid;grid-template-columns:9px minmax(0,1.6fr) auto auto 78px;gap:10px;align-items:center;
+  padding:9px 2px;border-bottom:1px solid var(--line);font-size:12px}
+.ncalrow:last-child{border-bottom:0}
+.ncdot{width:7px;height:7px;border-radius:50%;background:var(--faint)}
+.ncdot.down{background:var(--down)}.ncdot.warn{background:var(--warn)}
+.ncname{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.ncwhen,.ncfc{font-size:11px;white-space:nowrap}
+.ncdir{text-align:right;font-size:11px;white-space:nowrap}
+@media(max-width:640px){
+  .ncalrow{grid-template-columns:9px 1fr auto;row-gap:2px}
+  .ncwhen{grid-column:2}.ncfc{display:none}.ncdir{grid-column:3}
+}
+.nverdict{display:flex;align-items:flex-start;gap:10px;padding:11px 12px;border-radius:10px;margin-bottom:10px;
+  font-size:12px;line-height:1.55;border:1px solid var(--line);background:var(--panel2)}
+.nverdict.take{border-color:#1d4a2c}
+.nverdict.skip{border-color:#4a3a1a}
+.nxplans.muted{opacity:.55}

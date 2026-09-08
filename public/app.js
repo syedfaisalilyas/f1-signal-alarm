@@ -1110,18 +1110,107 @@ async function loadNews(mine, d) {
 }
 
 function renderNews(n) {
-  const next = n.next ? `
-    <div class="verdict ${n.next.rank === 3 ? 'down' : 'warn'}">
-      <div class="vtop"><span class="pill big ${impCls(n.next.impact)}">${n.next.impact}</span>
-        <span><b>${n.next.title}</b> · ${n.next.currency} · ${untilText(n.next.inMinutes)}</span></div>
-      <div class="cnote">${fmtWhen(n.next.at)}${n.next.forecast ? ` · forecast <b>${n.next.forecast}</b>` : ''}${n.next.previous ? ` · previous ${n.next.previous}` : ''}${
-        n.next.typicalRangePct ? ` · the last ${n.next.priorMoves.length} of these moved it <b>${n.next.typicalRangePct}%</b> within 30 minutes` : ''}</div>
-    </div>` : '<div class="cnote">nothing scheduled that usually moves this</div>';
+  const arrow = d => d === 'up' ? '▲' : d === 'down' ? '▼' : '—';
+  const dcls = d => d === 'up' ? 'up' : d === 'down' ? 'down' : 'dim';
+  const name = n.instrument === 'gold' ? 'Gold' : (n.symbol || 'it');
 
-  const upcoming = n.upcoming?.length ? `<div class="ctable">` + n.upcoming.map(e =>
-    `<div class="crow"><span class="${impCls(e.impact)}">${e.currency} ${e.title}</span>` +
-    `<span class="dim">${fmtWhen(e.at)}</span>` +
-    `<span class="dim">${e.forecast ? 'f ' + e.forecast : ''}${e.previous ? ' / p ' + e.previous : ''}</span></div>`).join('') + `</div>`
+  // ── the next release, with the direction each outcome implies ──
+  const nx = n.next;
+  const react = nx && nx.reaction;
+  const next = !nx ? '<div class="cnote">nothing scheduled that usually moves this</div>' : `
+    <div class="nxcard ${nx.rank === 3 ? 'high' : 'med'}">
+      <div class="nxhead">
+        <span class="pill big ${impCls(nx.impact)}">${nx.impact}</span>
+        <div class="nxtitle"><b>${nx.currency} ${nx.title}</b>
+          <span class="dim">${fmtWhen(nx.at)} · ${untilText(nx.inMinutes)}</span></div>
+        <div class="nxcount">${untilText(nx.inMinutes).replace('in ', '')}</div>
+      </div>
+      <div class="nxnums">
+        <div><em>forecast</em><b>${nx.forecast || '—'}</b></div>
+        <div><em>previous</em><b>${nx.previous || '—'}</b></div>
+        <div><em>expected move</em><b>${n.plan ? n.plan.expectedMovePct + '%' : '—'}</b></div>
+      </div>
+      ${react ? `
+      <div class="nxpred">
+        <div class="predrow ${dcls(react.onBeat)}">
+          <span class="predif">if it comes in <b>ABOVE</b> ${nx.forecast || 'forecast'}</span>
+          <span class="predgo">${name} <b>${arrow(react.onBeat)} ${react.onBeat.toUpperCase()}</b></span>
+        </div>
+        <div class="predrow ${dcls(react.onMiss)}">
+          <span class="predif">if it comes in <b>BELOW</b> ${nx.forecast || 'forecast'}</span>
+          <span class="predgo">${name} <b>${arrow(react.onMiss)} ${react.onMiss.toUpperCase()}</b></span>
+        </div>
+        <div class="predwhy">${react.why} <span class="conf ${react.confidence}">${react.confidence} confidence</span></div>
+      </div>` : '<div class="cnote">no directional rule for this release — it is on the calendar but the reaction is not one-way enough to state</div>'}
+    </div>`;
+
+  // ── the trade, written before the number lands ──
+  const plan = !n.plan ? '' : `
+    <h4>The trade, ready before it lands</h4>
+    <div class="nverdict ${n.plan.verdict}">
+      <span class="pill big ${n.plan.verdict === 'take' ? 'up' : 'warn'}">${n.plan.verdict === 'take' ? 'WORTH TAKING' : 'SIT IT OUT'}</span>
+      <span>${n.plan.verdictWhy}</span>
+    </div>
+    <div class="nxplans${n.plan.verdict === 'skip' ? ' muted' : ''}">
+      ${n.plan.branches.map(b => `
+        <div class="nxplan ${b.side === 'LONG' ? 'up' : 'down'}">
+          <div class="nxplanhead"><span class="pill ${b.side === 'LONG' ? 'up' : 'down'}">${b.side}</span>
+            <span class="dim">${b.condition}</span></div>
+          <div class="cplan">
+            <div><em>entry</em><b>${fmtPx(b.entry)}</b></div>
+            <div><em>stop</em><b class="down">${fmtPx(b.stop)}</b></div>
+            <div><em>target 1</em><b class="up">${fmtPx(b.targets[0])}</b></div>
+            <div><em>target 2</em><b class="up">${fmtPx(b.targets[1])}</b></div>
+            <div><em>risk</em><b>${b.riskPct}%</b></div>
+            <div><em>reward:risk</em><b>${b.rr}:1</b></div>
+          </div>
+        </div>`).join('')}
+    </div>
+    <div class="cnote">Stops sit beyond the pre-release hour (${fmtPx(n.plan.preRange.lo)}–${fmtPx(n.plan.preRange.hi)}),
+      because what takes you out on a release is the whipsaw through the other side, not a clean move against you.
+      Expected move is ${n.plan.basis}.</div>`;
+
+  // ── how the rule actually did ──
+  const r = n.rule || {};
+  const sum = r.summary;
+  const scoreCls = !sum ? '' : sum.totalR > 0 ? 'up' : sum.totalR < 0 ? 'down' : '';
+  const rule = `
+    <h4>Every trade this rule gave — last 7 days</h4>
+    ${sum ? `
+    <div class="cgrid">
+      <div><em>trades</em><b>${sum.count}</b></div>
+      <div><em>win rate</em><b class="${sum.winRate >= 50 ? 'up' : 'down'}">${sum.winRate}%</b></div>
+      <div><em>won / lost</em><b>${sum.wins} / ${sum.losses}</b></div>
+      <div><em>total</em><b class="${scoreCls}">${sum.totalR >= 0 ? '+' : ''}${sum.totalR}R</b></div>
+    </div>` : ''}
+    ${r.trades?.length ? `<div class="ntrades">${r.trades.map(t => `
+      <div class="ntrade ${t.outcome === 'target' ? 'win' : t.outcome === 'stopped' ? 'loss' : t.outcome === 'no trade' ? 'skip' : 'open'}">
+        <div class="ntop">
+          <span class="pill ${t.side === 'LONG' ? 'up' : t.side === 'SHORT' ? 'down' : 'dim'}">${t.side || 'NO TRADE'}</span>
+          <b>${t.currency} ${t.title}</b>
+          <span class="tag">${t.impact}</span>
+          <span class="nres ${t.rMultiple > 0 ? 'up' : t.rMultiple < 0 ? 'down' : 'dim'}">${
+            t.rMultiple == null ? t.note || '—' : (t.rMultiple >= 0 ? '+' : '') + t.rMultiple + 'R'}</span>
+        </div>
+        ${t.side ? `<div class="nmid">${fmtPx(t.entry)} → stop ${fmtPx(t.stop)} → target ${fmtPx(t.target)}
+          <span class="dim">· ${t.outcome}</span></div>` : ''}
+        <div class="dim nbot">${fmtWhen(t.at)}${t.matchedRule ? ' · ' + t.matchedRule : ''}</div>
+      </div>`).join('')}</div>`
+      : '<div class="cnote">no releases in the last seven days that this rule has a view on</div>'}
+    <div class="cnote">Each row is the plan above, applied to a release that already happened, then walked forward
+      through the 5-minute candles. A bar that touches both stop and target counts as a loss — with only OHLC there is
+      no way to know which came first, and the pessimistic read is the one that does not flatter the rule.</div>`;
+
+  // ── the rest of the calendar, each with its direction ──
+  const upcoming = n.upcoming?.length ? `<div class="ncal">` + n.upcoming.map(e => `
+    <div class="ncalrow">
+      <span class="ncdot ${impCls(e.impact)}"></span>
+      <span class="ncname">${e.currency} ${e.title}</span>
+      <span class="ncwhen dim">${fmtWhen(e.at)}</span>
+      <span class="ncfc dim">${e.forecast ? 'f ' + e.forecast : ''}${e.previous ? ' / p ' + e.previous : ''}</span>
+      <span class="ncdir ${e.reaction ? dcls(e.reaction.onBeat) : 'dim'}">${
+        e.reaction ? arrow(e.reaction.onBeat) + ' if above' : '—'}</span>
+    </div>`).join('') + `</div>`
     : '<div class="cnote">calendar is quiet for this instrument</div>';
 
   const sh = n.shocks || {};
@@ -1133,62 +1222,30 @@ function renderNews(n) {
       `<span class="dim">${fmtWhen(m.at)}</span> · range <b>${m.rangePct}%</b> · ${what}</div>`;
   }).join('') + `</div>` : '<div class="cnote">not enough history yet</div>';
 
-  const measured = n.impact?.summary ? `
-    <div class="cgrid">
-      <div><em>releases studied</em><b>${n.impact.summary.count}</b></div>
-      <div><em>average 30m range</em><b>${n.impact.summary.avgRangePct}%</b></div>
-      <div><em>closed up / down</em><b>${n.impact.summary.upCount} / ${n.impact.summary.downCount}</b></div>
-      <div><em>biggest</em><b>${n.impact.summary.biggest.rangePct}%</b></div>
-    </div>
-    <div class="cnote">Biggest was <b>${n.impact.summary.biggest.title}</b> on ${fmtWhen(n.impact.summary.biggest.at)}.</div>`
-    : `<div class="cnote">${n.archiveNote || 'no completed releases in the window yet'}</div>`;
-
   const heads = n.headlines?.length ? `<div class="clist">` + n.headlines.map(h =>
     `<div><span class="dim">${fmtWhen(h.at)}</span> · ${h.link ? `<a href="${h.link}" target="_blank" rel="noopener">${h.title}</a>` : h.title}` +
     `${h.source ? ` <i class="dim">${h.source}</i>` : ''}</div>`).join('') + `</div>`
     : '<div class="cnote">no headlines</div>';
 
   return `
-    <h4>Next event that moves it</h4>
+    <h4>Next release — and which way it points</h4>
     ${next}
+    ${plan}
+    ${rule}
 
-    <h4>Coming up</h4>
+    <h4>The rest of the week</h4>
     ${upcoming}
-    <div class="cnote">Impact and forecast are the calendar's own. Times are yours, converted from the release timezone.</div>
+    <div class="cnote">Impact, forecast and previous are the calendar's own. The arrow is this app's rule for what an
+      above-forecast number does to ${name} — a foreign release runs the other way, through a softer dollar.</div>
 
     <h4>What actually moved it — last ${sh.days || 21} days</h4>
     ${shockRows}
-    <div class="cnote">Sharpest ${sh.windowMin || 30}-minute windows, found in the candles rather than assumed from a calendar. Average ${sh.avgShockRangePct ?? '—'}% range${
-      sh.unexplained ? ` · <b>${sh.unexplained}</b> of them had no news attached, which is worth knowing: this instrument moves on flow too` : ''}.</div>
-
-    <h4>Measured release impact</h4>
-    ${measured}
+    <div class="cnote">Sharpest ${sh.windowMin || 30}-minute windows, found in the candles rather than assumed from a
+      calendar. Average ${sh.avgShockRangePct ?? '—'}% range${
+      sh.unexplained ? ` · <b>${sh.unexplained}</b> had no news attached, which is worth knowing: this moves on flow too` : ''}.</div>
 
     <h4>Headlines</h4>
     ${heads}`;
-}
-
-function hourStrip(profile) {
-  if (!profile?.length) return '';
-  // Height is the hour's range against this coin's own normal hour, so the
-  // strip reads the same on BTC and on a meme coin. 5× tops it out.
-  const bars = profile.map(h => {
-    const pctH = Math.max(4, Math.min(100, (h.ratio || 0) / 5 * 100));
-    const hot = (h.ratio || 0) >= 2 ? ' hot' : '';
-    const t = new Date(h.t).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-    return `<i class="${h.up ? 'up' : 'down'}${hot}" style="height:${pctH}%" title="${t} · range ${h.rangePct}% (${h.ratio}× normal) · ${pct(h.chgPct || 0)}"></i>`;
-  }).join('');
-  return `<div class="hstrip">${bars}</div>
-    <div class="hstriplbl"><span>48h ago</span><span>now</span></div>
-    <div class="cnote">One bar per hour. Height is that hour's range against this coin's normal hour, green up / red down — bright bars are 2× normal or more.</div>`;
-}
-
-function lvlRows(list, kind) {
-  if (!list?.length) return `<div class="cnote">no clean ${kind} in the last fortnight</div>`;
-  return `<div class="ctable">` + list.map(l =>
-    `<div class="crow"><span class="${kind === 'support' ? 'up' : 'down'}">${fmtPx(l.price)}</span>` +
-    `<span class="dim">${l.distPct >= 0 ? '+' : ''}${l.distPct}%</span>` +
-    `<span class="dim">${l.touches} touch${l.touches === 1 ? '' : 'es'}</span></div>`).join('') + `</div>`;
 }
 
 function renderCoin(d) {

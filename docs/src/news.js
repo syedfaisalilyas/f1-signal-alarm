@@ -20,6 +20,7 @@
 // position against.
 
 import { fetchCandles } from './providers.js';
+import { reactionFor, directionFor, planFor, backtest } from './newsplan.js';
 
 const CAL_URL = 'https://nfs.faireconomy.media/ff_calendar_thisweek.json';
 const NEWS_URL = 'https://news.google.com/rss/search';
@@ -335,11 +336,12 @@ export async function shocks({ market, symbol, instrument, days = 21, windowMin 
 
 export async function newsFor({ market, symbol, instrument, days = 14 }) {
   const drv = driversFor(instrument, symbol);
-  const [cal, heads, imp, shk] = await Promise.all([
+  const [cal, heads, imp, shk, bars] = await Promise.all([
     calendar().catch(() => readArchive()),
     headlines(instrument, symbol).catch(() => []),
     impact({ market, symbol, instrument, days }).catch(() => ({ events: [], summary: null })),
-    shocks({ market, symbol, instrument, days: Math.max(days, 21) }).catch(() => ({ moves: [] }))
+    shocks({ market, symbol, instrument, days: Math.max(days, 21) }).catch(() => ({ moves: [] })),
+    fetchCandles(market, symbol, '5m', 1500).catch(() => [])
   ]);
 
   const own = e => drv.currencies.includes(e.currency);
@@ -360,6 +362,43 @@ export async function newsFor({ market, symbol, instrument, days = 14 }) {
     upcoming.find(e => e.primary) ||
     upcoming.find(e => e.rank === 3) ||
     upcoming[0] || null;
+
+  // Attach the reaction rule to every upcoming event, so the list says which
+  // way each one leans rather than only how loud it is.
+  const price = bars.filter(b => b.closed).at(-1)?.c || null;
+  for (const e of upcoming) {
+    const r = reactionFor(instrument, symbol, e.title, e.currency);
+    if (!r) continue;
+    e.reaction = {
+      onBeat: directionFor(r, e.currency),
+      onMiss: directionFor(r, e.currency) === 'up' ? 'down' : 'up',
+      why: r.why,
+      confidence: r.weight >= 3 ? 'high' : r.weight === 2 ? 'medium' : 'low'
+    };
+  }
+
+  // The plan for the next one, written before the number lands.
+  let plan = null;
+  if (nextHigh && price) {
+    const r = reactionFor(instrument, symbol, nextHigh.title, nextHigh.currency);
+    const priorRanges = (imp.events || [])
+      .filter(e => e.title === nextHigh.title && e.rangePct)
+      .slice(0, 6).map(e => e.rangePct);
+    if (r) plan = planFor({ event: nextHigh, reaction: r, price, bars, priorRanges,
+      name: instrument === 'gold' ? 'gold' : instrument === 'silver' ? 'silver' : symbol });
+  }
+
+  // How the same rule did on the releases that already happened this week.
+  const weekAgo = Date.now() - 7 * 24 * 3600 * 1000;
+  // Every release the rule has a view on, not just the loud ones. A week with
+  // no high-impact prints — a holiday Monday, say — would otherwise show an
+  // empty scorecard, when the quiet releases are exactly the ones worth knowing
+  // do nothing. Their impact rating rides along so the results can say which
+  // were which.
+  const pastWeek = cal.filter(e => e.at < Date.now() && e.at >= weekAgo && e.rank >= 1 && relevant(e));
+  const rule = bars.length
+    ? backtest({ events: pastWeek, bars, instrument, symbol })
+    : { trades: [], summary: null };
   const priorSame = nextHigh
     ? (imp.events || []).filter(e => e.title === nextHigh.title).slice(0, 4)
     : [];
@@ -381,6 +420,9 @@ export async function newsFor({ market, symbol, instrument, days = 14 }) {
     headlines: heads.slice(0, 10),
     impact: imp,
     shocks: shk,
+    price,
+    plan,
+    rule,
     // The calendar feed only publishes the current week, so event-anchored
     // history starts empty and fills week by week. Say so rather than letting
     // an empty section read as "nothing ever moved this".
