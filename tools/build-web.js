@@ -32,7 +32,7 @@ const modules = [
   'feed.js', 'providers.js', 'geofeed.js', 'strategy.js', 'indicators.js',
   'volumeprofile.js', 'calibrate.js', 'volatility.js', 'screener.js',
   'leverage.js', 'notify.js', 'trend.js', 'history.js', 'ignition.js', 'coinreport.js',
-  'hotwatch.js'
+  'hotwatch.js', 'symbols.js', 'news.js'
 ];
 for (const m of modules) copy(path.join(root, 'src', m), path.join(out, 'src', m));
 

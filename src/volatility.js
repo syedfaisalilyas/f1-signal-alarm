@@ -5,6 +5,8 @@
 // from a single 5m-klines request per symbol (13 candles = one hour), so the
 // board costs 1 + N requests rather than 1 + 2N.
 
+import { fetchCandles, ticker24h } from './providers.js';
+
 const BASE = { spot: 'https://api.binance.com/api/v3', futures: 'https://fapi.binance.com/fapi/v1' };
 const LEVERAGED = /(UP|DOWN|BULL|BEAR)USDT$/;
 
@@ -96,8 +98,37 @@ export class VolatilityScanner {
     return rows;
   }
 
+  // Anything the Binance board cannot answer — forex, metals, oil — measured
+  // the same way but from provider candles instead of a bulk ticker. Same
+  // shape out, so the lookup box renders it without knowing the difference.
+  async lookupViaCandles(market, symbol) {
+    const [m5, t] = await Promise.all([
+      fetchCandles(market, symbol, '5m', 300),
+      ticker24h(market, symbol).catch(() => null)
+    ]);
+    const closed = m5.filter(b => b.closed);
+    if (!closed.length) throw new Error(`no candles for ${symbol}`);
+    const last = closed.at(-1);
+    const win = closed.slice(-12);
+    const day = closed.slice(-288);
+    const ranges = win.map(b => range(b.h, b.l)).filter(v => v !== null);
+    const price = last.c;
+    const dayOpen = day[0]?.o || price;
+    return {
+      market, symbol,
+      price,
+      changePct: t?.changePct ?? (dayOpen > 0 ? (price - dayOpen) / dayOpen * 100 : null),
+      quoteVol: t?.volume ?? null,
+      vol1d: range(Math.max(...day.map(b => b.h)), Math.min(...day.map(b => b.l))),
+      vol5m: range(last.h, last.l),
+      vol1h: range(Math.max(...win.map(b => b.h)), Math.min(...win.map(b => b.l))),
+      avg5m: ranges.length ? ranges.reduce((a, b) => a + b, 0) / ranges.length : null
+    };
+  }
+
   // Single symbol, always fresh — used by the lookup box.
   async lookup(market, symbol) {
+    if (market === 'forex') return this.lookupViaCandles(market, symbol);
     const sym = symbol.toUpperCase();
     const [t, intra] = await Promise.all([
       jget(`${BASE[market]}/ticker/24hr?symbol=${sym}`),

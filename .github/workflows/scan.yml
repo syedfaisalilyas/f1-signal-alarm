@@ -77,7 +77,8 @@ jobs:
         run: |
           pub=$(mktemp -d)
           cp cloud/state.json cloud/snapshot.json "$pub"/
-          [ -f cloud/leverage.json ] && cp cloud/leverage.json "$pub"/
+          cp cloud/leverage.json "$pub"/ 2>/dev/null || true
+          cp cloud/news.json "$pub"/ 2>/dev/null || true
           cd "$pub"
           git init -q -b state
           git config user.name "f1-alarm bot"

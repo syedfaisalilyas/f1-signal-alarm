@@ -207,6 +207,20 @@ button.vmore{
 button.vmore:hover{color:var(--info);background:var(--panel2)}
 .volhdr .vmore{width:26px}
 
+/* Same affordance in the search dropdown: open the full report without first
+   committing the symbol to the watchlist. */
+button.resmore{
+  background:none;border:0;color:var(--faint);cursor:pointer;font-size:15px;line-height:1;
+  padding:2px 6px;border-radius:6px;margin-left:auto;flex:none;
+}
+button.resmore:hover{color:var(--info);background:var(--panel2)}
+.res .tag{flex:none}
+.res.locked{opacity:.55}
+.res.locked b{color:var(--dim)}
+
+/* Instrument rows carry a "via PAXGUSDT" note — keep it quiet next to the name. */
+.vsym .tag.fx{font-size:9px;padding:1px 4px;margin-left:5px;vertical-align:middle;opacity:.75}
+
 /* ── one-coin report ── */
 .cbtns{display:flex;gap:6px;align-items:center;flex:none}
 .cbtns a{text-decoration:none;color:var(--info)}

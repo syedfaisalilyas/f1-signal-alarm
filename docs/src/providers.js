@@ -1,6 +1,7 @@
 // Market data. Crypto = Binance (no API key). Forex = Twelve Data (free key).
 
 import { SPOT_MIRROR, isGeoBlocked, isRateLimited, shouldFallBack, mexcCandles, mexcTicker, mexcPerps, mexcFactor } from './geofeed.js';
+import { searchInstruments } from './symbols.js';
 
 const SPOT = 'https://api.binance.com/api/v3';
 const FUT = 'https://fapi.binance.com/fapi/v1';
@@ -63,11 +64,25 @@ export async function listSymbols(market) {
       }));
   } else if (market === 'forex') {
     if (!process.env.TWELVEDATA_KEY) return [];
-    const d = await jget(`${TD}/forex_pairs`);
-    out = (d.data || []).map(p => ({
+    // XAU/USD is NOT in forex_pairs — Twelve Data files metals and energy under
+    // /commodities. Without this second call, searching "gold" finds nothing
+    // even with a valid key.
+    const [pairs, comms] = await Promise.all([
+      jget(`${TD}/forex_pairs`).catch(() => ({ data: [] })),
+      jget(`${TD}/commodities`).catch(() => ({ data: [] }))
+    ]);
+    const fx = (pairs.data || []).map(p => ({
       market: 'forex', symbol: p.symbol, base: p.currency_base, quote: p.currency_quote,
       label: p.symbol, tick: 0
     }));
+    const cm = (comms.data || comms || []).map(p => {
+      const [base, quote] = String(p.symbol).split('/');
+      return {
+        market: 'forex', symbol: p.symbol, base: base || p.symbol, quote: quote || 'USD',
+        label: p.name ? `${p.symbol} · ${p.name}` : p.symbol, category: p.category || null, tick: 0
+      };
+    });
+    out = [...fx, ...cm];
   }
   cache.symbols[market] = out;
   cache.at[market] = Date.now();
@@ -79,6 +94,9 @@ export async function searchSymbols(q, markets = ['spot', 'futures', 'forex']) {
   const lists = await Promise.all(markets.map(m => listSymbols(m).catch(() => [])));
   const all = lists.flat();
   if (!term) return all.filter(s => s.quote === 'USDT').slice(0, 40);
+  // "gold", "xau", "oil" are not exchange symbols. Resolve them first so they
+  // rank above any coin that merely contains the letters.
+  const named = searchInstruments(q);
   const scored = [];
   for (const s of all) {
     const sym = s.symbol.toUpperCase(), base = (s.base || '').toUpperCase();
@@ -93,7 +111,9 @@ export async function searchSymbols(q, markets = ['spot', 'futures', 'forex']) {
       scored.push({ ...s, score });
     }
   }
-  return scored.sort((a, b) => a.score - b.score || a.symbol.length - b.symbol.length).slice(0, 60);
+  const seen = new Set(named.map(n => `${n.market}:${n.symbol}`));
+  const merged = [...named, ...scored.filter(s => !seen.has(`${s.market}:${s.symbol}`))];
+  return merged.sort((a, b) => a.score - b.score || a.symbol.length - b.symbol.length).slice(0, 60);
 }
 
 const TD_INTERVAL = { '1m': '1min', '3m': '1min', '5m': '5min', '15m': '15min', '30m': '30min', '1h': '1h' };

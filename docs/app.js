@@ -118,9 +118,25 @@ function paintResults() {
   resultsData.forEach((s, i) => {
     const tag = s.market === 'futures' ? '<span class="tag fut">perp</span>'
       : s.market === 'forex' ? '<span class="tag fx">forex</span>' : '<span class="tag">spot</span>';
-    const n = el('div', 'res' + (i === selIdx ? ' sel' : ''),
-      `<b>${s.symbol}</b><span class="dim" style="font-size:12px">${s.label}</span>${tag}`);
-    n.onclick = () => addWatch(s);
+    // A named instrument leads with its name — "Gold", not PAXGUSDT — because
+    // that is what was typed and what the row means.
+    const head = s.instrument ? s.base : s.symbol;
+    const sub = s.unavailable ? s.reason
+      : s.instrument ? `${s.symbol}${s.note ? ' · ' + s.note : ''}`
+      : s.label;
+    const n = el('div', 'res' + (i === selIdx ? ' sel' : '') + (s.unavailable ? ' locked' : ''),
+      `<b>${head}</b><span class="dim" style="font-size:12px">${sub}</span>${s.unavailable ? '<span class="tag">key needed</span>' : tag}` +
+      (s.unavailable ? '' : `<button class="resmore" title="Full report — trend, levels, flow, news and whether there is a trade in it">⋯</button>`));
+    if (s.unavailable) {
+      n.onclick = () => alert(s.reason);
+    } else {
+      n.querySelector('.resmore').onclick = ev => {
+        ev.stopPropagation();
+        hideResults(); $('#q').value = '';
+        openCoin(s.market, s.symbol, s.instrument || null);
+      };
+      n.onclick = () => addWatch(s);
+    }
     box.appendChild(n);
   });
   box.classList.remove('hidden');
@@ -968,7 +984,7 @@ function renderVol() {
 
 function volRow(r, isLookup) {
   const n = el('div', 'volrow body' + (r.pinned ? ' pin' : '') + (isLookup ? ' pinlookup' : ''),
-    `<span class="vsym">${r.symbol}${r.pinned ? '<span class="star">⭐</span>' : ''}${hotFlags.has(r.symbol) ? '<span class="hotflag">🔥</span>' : ''}</span>
+    `<span class="vsym">${r.label || r.symbol}${r.proxied ? '<span class="tag fx">via ' + r.symbol + '</span>' : ''}${r.pinned ? '<span class="star">⭐</span>' : ''}${hotFlags.has(r.symbol) ? '<span class="hotflag">🔥</span>' : ''}</span>
      <span class="vnum ${volClass(r.vol5m, 'vol5m')}">${vpct(r.vol5m)}</span>
      <span class="vnum ${volClass(r.vol1h, 'vol1h')}">${vpct(r.vol1h)}</span>
      <span class="vnum ${volClass(r.vol1d, 'vol1d')}">${vpct(r.vol1d)}</span>
@@ -978,7 +994,7 @@ function volRow(r, isLookup) {
             (r.avg5m != null ? ` · avg 5m move ${r.avg5m.toFixed(2)}%` : '') +
             (hot ? `\n🔥 hours woke up — ${hot.ratio}× its normal hour on ${hot.volX}× volume · grade ${hot.grade}: ${hot.why}` : '');
   n.querySelector('.vsym').onclick = () => addWatch({ market: r.market, symbol: r.symbol });
-  n.querySelector('.vmore').onclick = e => { e.stopPropagation(); openCoin(r.market, r.symbol); };
+  n.querySelector('.vmore').onclick = e => { e.stopPropagation(); openCoin(r.market, r.symbol, r.instrument || null); };
   return n;
 }
 
@@ -1045,22 +1061,104 @@ const tvUrl = (market, symbol) =>
 
 let coinReq = 0;
 
-async function openCoin(market, symbol) {
+async function openCoin(market, symbol, name) {
   const mine = ++coinReq;
+  const query = name || symbol;                      // "gold" resolves server-side; PAXGUSDT also works
   $('#coinModal').classList.remove('hidden');
-  $('#coinTitle').textContent = symbol;
-  $('#coinSub').textContent = (market === 'spot' ? 'spot' : 'USD-M perp') + ' · reading the tape…';
+  $('#coinTitle').textContent = name || symbol;
+  $('#coinSub').textContent = (market === 'spot' ? 'spot' : market === 'forex' ? 'forex' : 'USD-M perp') + ' · reading the tape…';
   $('#coinChart').href = tvUrl(market, symbol);
   $('#coinBody').innerHTML =
     '<div class="cwait">pulling 1h / 15m / 5m candles, six trend timeframes, funding, open interest and the long-short book…</div>';
   try {
-    const d = await apiJson(`/api/coin?market=${market}&symbol=${encodeURIComponent(symbol)}`);
+    const d = await apiJson(`/api/coin?market=${market}&symbol=${encodeURIComponent(query)}`);
     if (mine !== coinReq) return;                    // a newer coin was opened meanwhile
     if (d.error) throw new Error(d.error);
     renderCoin(d);
+    // News is a second request so a slow calendar never holds up the report.
+    // Only instruments that trade on a schedule have any — a memecoin has no CPI.
+    if (d.instrument || d.market === 'forex') loadNews(mine, d);
   } catch (e) {
     if (mine === coinReq) $('#coinBody').innerHTML = `<div class="cwait">could not build the report — ${e.message}</div>`;
   }
+}
+
+// ─────────── news, calendar and what past releases did ───────────
+const fmtWhen = ms => new Date(ms).toLocaleString([], { weekday: 'short', day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' });
+const untilText = min => min < 60 ? `in ${min}m` : min < 1440 ? `in ${Math.round(min / 60)}h` : `in ${Math.round(min / 1440)}d`;
+const impCls = i => i === 'High' ? 'down' : i === 'Medium' ? 'warn' : 'dim';
+
+async function loadNews(mine, d) {
+  const host = document.getElementById('coinNews');
+  if (!host) return;
+  host.innerHTML = '<div class="cwait">checking the calendar and the tape…</div>';
+  try {
+    const n = await apiJson(`/api/news?market=${d.market}&symbol=${encodeURIComponent(d.instrument || d.symbol)}`);
+    if (mine !== coinReq) return;
+    if (n.error) throw new Error(n.error);
+    host.innerHTML = renderNews(n);
+  } catch (e) {
+    if (mine === coinReq) host.innerHTML = `<div class="cnote">no news feed — ${e.message}</div>`;
+  }
+}
+
+function renderNews(n) {
+  const next = n.next ? `
+    <div class="verdict ${n.next.rank === 3 ? 'down' : 'warn'}">
+      <div class="vtop"><span class="pill big ${impCls(n.next.impact)}">${n.next.impact}</span>
+        <span><b>${n.next.title}</b> · ${n.next.currency} · ${untilText(n.next.inMinutes)}</span></div>
+      <div class="cnote">${fmtWhen(n.next.at)}${n.next.forecast ? ` · forecast <b>${n.next.forecast}</b>` : ''}${n.next.previous ? ` · previous ${n.next.previous}` : ''}${
+        n.next.typicalRangePct ? ` · the last ${n.next.priorMoves.length} of these moved it <b>${n.next.typicalRangePct}%</b> within 30 minutes` : ''}</div>
+    </div>` : '<div class="cnote">nothing scheduled that usually moves this</div>';
+
+  const upcoming = n.upcoming?.length ? `<div class="ctable">` + n.upcoming.map(e =>
+    `<div class="crow"><span class="${impCls(e.impact)}">${e.currency} ${e.title}</span>` +
+    `<span class="dim">${fmtWhen(e.at)}</span>` +
+    `<span class="dim">${e.forecast ? 'f ' + e.forecast : ''}${e.previous ? ' / p ' + e.previous : ''}</span></div>`).join('') + `</div>`
+    : '<div class="cnote">calendar is quiet for this instrument</div>';
+
+  const sh = n.shocks || {};
+  const shockRows = sh.moves?.length ? `<div class="clist">` + sh.moves.map(m => {
+    const what = m.event ? `<b>${m.event.currency} ${m.event.title}</b>`
+      : m.headlines?.length ? m.headlines[0].title
+      : '<i class="dim">no news at that time — this was flow, not a release</i>';
+    return `<div><span class="pill ${m.direction === 'up' ? 'up' : 'down'}">${m.movePct >= 0 ? '+' : ''}${m.movePct}%</span> ` +
+      `<span class="dim">${fmtWhen(m.at)}</span> · range <b>${m.rangePct}%</b> · ${what}</div>`;
+  }).join('') + `</div>` : '<div class="cnote">not enough history yet</div>';
+
+  const measured = n.impact?.summary ? `
+    <div class="cgrid">
+      <div><em>releases studied</em><b>${n.impact.summary.count}</b></div>
+      <div><em>average 30m range</em><b>${n.impact.summary.avgRangePct}%</b></div>
+      <div><em>closed up / down</em><b>${n.impact.summary.upCount} / ${n.impact.summary.downCount}</b></div>
+      <div><em>biggest</em><b>${n.impact.summary.biggest.rangePct}%</b></div>
+    </div>
+    <div class="cnote">Biggest was <b>${n.impact.summary.biggest.title}</b> on ${fmtWhen(n.impact.summary.biggest.at)}.</div>`
+    : `<div class="cnote">${n.archiveNote || 'no completed releases in the window yet'}</div>`;
+
+  const heads = n.headlines?.length ? `<div class="clist">` + n.headlines.map(h =>
+    `<div><span class="dim">${fmtWhen(h.at)}</span> · ${h.link ? `<a href="${h.link}" target="_blank" rel="noopener">${h.title}</a>` : h.title}` +
+    `${h.source ? ` <i class="dim">${h.source}</i>` : ''}</div>`).join('') + `</div>`
+    : '<div class="cnote">no headlines</div>';
+
+  return `
+    <h4>Next event that moves it</h4>
+    ${next}
+
+    <h4>Coming up</h4>
+    ${upcoming}
+    <div class="cnote">Impact and forecast are the calendar's own. Times are yours, converted from the release timezone.</div>
+
+    <h4>What actually moved it — last ${sh.days || 21} days</h4>
+    ${shockRows}
+    <div class="cnote">Sharpest ${sh.windowMin || 30}-minute windows, found in the candles rather than assumed from a calendar. Average ${sh.avgShockRangePct ?? '—'}% range${
+      sh.unexplained ? ` · <b>${sh.unexplained}</b> of them had no news attached, which is worth knowing: this instrument moves on flow too` : ''}.</div>
+
+    <h4>Measured release impact</h4>
+    ${measured}
+
+    <h4>Headlines</h4>
+    ${heads}`;
 }
 
 function hourStrip(profile) {
@@ -1088,12 +1186,14 @@ function lvlRows(list, kind) {
 
 function renderCoin(d) {
   const v = d.volatility, p = d.plan, l = d.levels, f = d.flow, fb = d.fib, lq = d.liquidity;
-  $('#coinTitle').textContent = d.symbol;
+  $('#coinTitle').textContent = d.label || d.symbol;
   $('#coinChart').href = tvUrl(d.market, d.symbol);
+  const venue = d.market === 'spot' ? 'spot' : d.market === 'forex' ? 'forex' : 'USD-M perp';
   $('#coinSub').innerHTML =
-    `${d.market === 'spot' ? 'spot' : 'USD-M perp'} · ${fmtPx(d.price)} · ` +
+    `${venue} · ${fmtPx(d.price)} · ` +
     `<b class="${d.changePct >= 0 ? 'up' : 'down'}">${pct(d.changePct ?? 0)}</b> in 24h · ` +
-    `${money(lq.quoteVol)} traded${d.maxLev ? ' · up to ' + d.maxLev + '×' : ''}`;
+    `${money(lq.quoteVol)} traded${d.maxLev ? ' · up to ' + d.maxLev + '×' : ''}` +
+    (d.proxied ? ` · <i class="dim">priced via ${d.symbol}</i>` : '');
 
   const trade = p.side === 'WAIT' ? '' : `
     <div class="cplan">
@@ -1198,6 +1298,10 @@ function renderCoin(d) {
 
     <h4>Order flow &amp; positioning</h4>
     ${flowGrid}
+
+    ${d.proxied && d.note ? `<div class="cnote warnnote">${d.note}. Every level, trend and flow reading below is measured on <b>${d.symbol}</b>, which is what you would actually trade here — a broker's spot ${d.label?.toLowerCase() || 'quote'} will differ by a fraction of a percent.</div>` : ''}
+
+    <div id="coinNews"></div>
 
     <div class="cfoot">built ${new Date(d.at).toLocaleTimeString()} · every number is a description of what already happened, not a forecast</div>`;
 }

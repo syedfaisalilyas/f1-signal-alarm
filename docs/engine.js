@@ -23,6 +23,8 @@ import { hotSweep, hotMessage, HOT_DEFAULTS } from './src/hotwatch.js';
 import { hydrate as hydrateLeverage, setOverrides } from './src/leverage.js';
 import { buildMessage } from './src/notify.js';
 import { filterTrades, aggregate, coverage } from './src/history.js';
+import { resolve as resolveInstrument } from './src/symbols.js';
+import { newsFor, seed as seedNews } from './src/news.js';
 
 // ─── persistence: localStorage instead of data/state.json ───
 const KEY = 'f1cloudstate';
@@ -47,7 +49,27 @@ setOverrides(state.settings.levOverride || {});
 // MEXC serves no CORS headers, so the page can't read the contract list itself.
 // The scheduled scanner publishes it to the state branch instead.
 const LEVERAGE_URL = 'https://raw.githubusercontent.com/syedfaisalilyas/f1-signal-alarm/state/leverage.json';
+const NEWS_URL = 'https://raw.githubusercontent.com/syedfaisalilyas/f1-signal-alarm/state/news.json';
 loadLeverage();
+loadNewsFeed();
+
+// The economic calendar and Google News send no CORS headers, so the page
+// cannot read them directly the way it reads Binance. The scheduled scanner
+// publishes both to the state branch every five minutes and this hydrates
+// src/news.js from that — the same arrangement leverage.json already uses.
+// Without it the news panel is simply empty; nothing else is affected.
+async function loadNewsFeed() {
+  const bust = Math.floor(Date.now() / 900000);      // 15 min, matching the module's own TTL
+  try {
+    const r = await fetch(`${NEWS_URL}?v=${bust}`, { cache: 'no-store' });
+    if (!r.ok) return console.warn('[engine] no news data yet (HTTP ' + r.status + ') — the news panel stays empty until the scanner publishes it');
+    const d = await r.json();
+    seedNews(d);
+    console.log('[engine] news hydrated —', (d.calendar || []).length, 'calendar events');
+  } catch (e) {
+    console.warn('[engine] news unavailable —', e.message);
+  }
+}
 async function loadLeverage() {
   // raw.githubusercontent negative-caches a 404 for ~5 minutes, which outlives
   // the gap before the first scan publishes this. A changing query key sidesteps
@@ -235,6 +257,13 @@ async function lookup(params) {
   const q = (params.get('symbol') || '').trim();
   if (!q) return json({ error: 'symbol required' }, 400);
 
+  // "gold" is not an exchange symbol — named instruments resolve to whichever
+  // feed can answer for them, which may not be the selected market.
+  const inst = resolveInstrument(q);
+  if (inst?.unavailable) return json({ error: inst.reason }, 503);
+  if (inst) return json({ ...(await vol.lookup(inst.market, inst.symbol)), resolvedFrom: q,
+    instrument: inst.id, label: inst.label, proxied: inst.proxied, note: inst.note });
+
   const tries = [q.toUpperCase()];
   if (!/USDT$|USDC$|\//i.test(q)) tries.push(q.toUpperCase() + 'USDT');
   for (const sym of tries) {
@@ -316,10 +345,28 @@ async function route(path, params, method, body) {
   }
 
   if (path === '/api/coin') {
-    const market = params.get('market') === 'spot' ? 'spot' : 'futures';
-    const symbol = (params.get('symbol') || '').trim().toUpperCase();
+    const raw = (params.get('symbol') || '').trim();
+    const inst = resolveInstrument(raw);
+    if (inst?.unavailable) return json({ error: inst.reason }, 503);
+    const market = inst ? inst.market : params.get('market') === 'spot' ? 'spot' : 'futures';
+    const symbol = inst ? inst.symbol : raw.toUpperCase();
     if (symbol.length < 4 || symbol.length > 24 || /[\s/?&#]/.test(symbol)) return json({ error: 'symbol required' }, 400);
-    return json(await coinReport(market, symbol));
+    const report = await coinReport(market, symbol);
+    if (inst) Object.assign(report, {
+      instrument: inst.id, label: inst.label, proxied: inst.proxied, note: inst.note, unit: inst.unit
+    });
+    return json(report);
+  }
+
+  if (path === '/api/news') {
+    const raw = (params.get('symbol') || '').trim();
+    if (!raw) return json({ error: 'symbol required' }, 400);
+    const inst = resolveInstrument(raw);
+    if (inst?.unavailable) return json({ error: inst.reason }, 503);
+    const market = inst ? inst.market : params.get('market') === 'spot' ? 'spot' : 'futures';
+    const symbol = inst ? inst.symbol : raw.toUpperCase();
+    const days = Math.min(90, Math.max(1, Number(params.get('days')) || 14));
+    return json(await newsFor({ market, symbol, instrument: inst?.id, days }));
   }
   if (path === '/api/volatility') return volatility(params);
   if (path === '/api/volatility/lookup') return lookup(params);

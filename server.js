@@ -18,6 +18,8 @@ import { IgnitionScanner } from './src/ignition.js';
 import { coinReport } from './src/coinreport.js';
 import { hotSweep, hotMessage, HOT_DEFAULTS } from './src/hotwatch.js';
 import { refresh as refreshLeverage, loaded as levLoaded, sourceName as levSourceName, setOverrides } from './src/leverage.js';
+import { resolve as resolveInstrument, INSTRUMENTS } from './src/symbols.js';
+import { newsFor, calendar as newsCalendar } from './src/news.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const app = express();
@@ -287,6 +289,16 @@ app.get('/api/volatility/lookup', async (req, res) => {
     const q = (req.query.symbol || '').trim();
     if (!q) return res.status(400).json({ error: 'symbol required' });
 
+    // "gold" is not a Binance symbol. Named instruments resolve to whichever
+    // feed can actually answer for them, which may not be the selected market.
+    const inst = resolveInstrument(q);
+    if (inst?.unavailable) return res.status(503).json({ error: inst.reason });
+    if (inst) {
+      const row = await vol.lookup(inst.market, inst.symbol);
+      return res.json({ ...row, resolvedFrom: q, instrument: inst.id,
+        label: inst.label, proxied: inst.proxied, note: inst.note });
+    }
+
     // Resolve loosely: exact, then +USDT, then the best fuzzy match from the
     // exchange list. Typing "trump" or fat-fingering "trumpt" should still land
     // on TRUMPUSDT rather than returning a raw 400.
@@ -410,13 +422,26 @@ app.get('/api/hothours', async (req, res) => {
 // timeframes, levels, fib, sweeps, order flow — and a side, or a refusal.
 app.get('/api/coin', async (req, res) => {
   try {
-    const market = req.query.market === 'spot' ? 'spot' : 'futures';
-    const symbol = (req.query.symbol || '').trim().toUpperCase();
+    const raw = (req.query.symbol || '').trim();
+    const inst = resolveInstrument(raw);
+    if (inst?.unavailable) return res.status(503).json({ error: inst.reason });
+
+    const market = inst ? inst.market
+      : req.query.market === 'spot' ? 'spot'
+      : req.query.market === 'forex' ? 'forex' : 'futures';
+    const symbol = inst ? inst.symbol : raw.toUpperCase();
     // Binance lists perps named 龙虾USDT and 牛来USDT, so this cannot be an
-    // A-Z test — it only has to reject what would break a URL.
-    if (symbol.length < 4 || symbol.length > 24 || /[\s/?&#]/.test(symbol))
+    // A-Z test — it only has to reject what would break a URL. Forex symbols
+    // carry a slash (XAU/USD), which is legal there and nowhere else.
+    const bad = market === 'forex' ? /[\s?&#]/ : /[\s/?&#]/;
+    if (symbol.length < 3 || symbol.length > 24 || bad.test(symbol))
       return res.status(400).json({ error: 'symbol required' });
-    res.json(await coinReport(market, symbol));
+
+    const report = await coinReport(market, symbol);
+    if (inst) Object.assign(report, {
+      instrument: inst.id, label: inst.label, proxied: inst.proxied, note: inst.note, unit: inst.unit
+    });
+    res.json(report);
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
@@ -435,6 +460,43 @@ app.get('/api/ignition/history', async (req, res) => {
       asked: d.asked, reach: d.reach, rows: d.rows.slice(0, 300) });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
+
+// Calendar, headlines and what past releases actually did to the price.
+// Only meaningful for instruments that trade on a schedule — a memecoin has no
+// CPI print — so it answers for named instruments and forex, and says so
+// plainly for anything else rather than inventing relevance.
+app.get('/api/news', async (req, res) => {
+  try {
+    const raw = (req.query.symbol || '').trim();
+    if (!raw) return res.status(400).json({ error: 'symbol required' });
+    const inst = resolveInstrument(raw);
+    if (inst?.unavailable) return res.status(503).json({ error: inst.reason });
+
+    const market = inst ? inst.market
+      : req.query.market === 'spot' ? 'spot'
+      : req.query.market === 'forex' ? 'forex' : 'futures';
+    const symbol = inst ? inst.symbol : raw.toUpperCase();
+    const days = Math.min(90, Math.max(1, Number(req.query.days) || 14));
+
+    res.json(await newsFor({ market, symbol, instrument: inst?.id, days }));
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// The whole week, unfiltered — for a calendar view rather than one instrument.
+app.get('/api/calendar', async (req, res) => {
+  try {
+    const all = await newsCalendar();
+    const from = Number(req.query.from) || Date.now() - 7 * 24 * 3600 * 1000;
+    const to = Number(req.query.to) || Date.now() + 14 * 24 * 3600 * 1000;
+    const minRank = Math.max(0, Math.min(3, Number(req.query.minRank) ?? 2));
+    res.json({ at: Date.now(), rows: all.filter(e => e.at >= from && e.at <= to && e.rank >= minRank) });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// What the search box can offer besides coins.
+app.get('/api/instruments', (_req, res) => res.json(
+  INSTRUMENTS.map(i => ({ id: i.id, name: i.name, ...(resolveInstrument(i.aliases[0]) || {}) }))
+));
 
 app.get('/api/settings', (_req, res) => res.json(store.get().settings));
 app.post('/api/settings', (req, res) => {

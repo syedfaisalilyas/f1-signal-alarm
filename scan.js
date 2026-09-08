@@ -17,12 +17,15 @@ import { scanUniverse } from './src/ignition.js';
 import { hotSweep, hotMessage } from './src/hotwatch.js';
 import { buildMessage, dispatch, initPush } from './src/notify.js';
 import { refresh as refreshLeverage, dump as leverageDump } from './src/leverage.js';
+import { calendar as newsCalendar, headlines as newsHeadlines } from './src/news.js';
+import { INSTRUMENTS } from './src/symbols.js';
 
 const DIR = path.join(process.cwd(), 'cloud');
 const STATE = path.join(DIR, 'state.json');
 const WATCHLIST = path.join(DIR, 'watchlist.json');
 const SNAPSHOT = path.join(DIR, 'snapshot.json');
 const LEVERAGE = path.join(DIR, 'leverage.json');
+const NEWS = path.join(DIR, 'news.json');
 const BARS = 600;
 
 const cfgFile = JSON.parse(fs.readFileSync(WATCHLIST, 'utf8'));
@@ -263,5 +266,27 @@ fs.writeFileSync(SNAPSHOT, JSON.stringify({
 
 const lev = leverageDump();
 if (Object.keys(lev).length) fs.writeFileSync(LEVERAGE, JSON.stringify(lev));
+
+// The hosted page cannot fetch the calendar or Google News itself — neither
+// sends CORS headers — so this run publishes both, the same way leverage.json
+// is published for MEXC. Failure here must never fail a scan: alerts are the
+// job, news is a convenience.
+try {
+  const cal = await newsCalendar();
+  const heads = {};
+  for (const inst of INSTRUMENTS) {
+    // Gold is the only instrument that works without a forex key, so it gets
+    // the deep list the shock matcher wants; the rest only need enough to fill
+    // the headlines panel. This file is re-downloaded by every page load.
+    const want = inst.id === 'gold' ? 40 : 12;
+    const list = await newsHeadlines(inst.id, inst.forex?.symbol || inst.id, want).catch(() => []);
+    if (list.length) heads[inst.id] = list.slice(0, want);
+  }
+  const payload = JSON.stringify({ at: Date.now(), calendar: cal, headlines: heads });
+  fs.writeFileSync(NEWS, payload);
+  console.log(`[scan] news: ${cal.length} calendar events, ${Object.keys(heads).length} instruments, ${(payload.length / 1024).toFixed(0)}KB`);
+} catch (e) {
+  console.warn('[scan] news publish skipped —', e.message);
+}
 
 console.log(`[scan] ${rows.length} watch(es), ${fired.length} alert(s), sources ${JSON.stringify(feedSources())}`);
