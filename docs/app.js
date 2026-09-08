@@ -219,6 +219,13 @@ function buildCard(w) {
 
   const head = el('div', 'chead', `
     <div class="sym"><b>${w.symbol}</b><span class="iv">${w.interval}</span>${mtag}</div>`);
+  // The card body opens the trade history; this opens the full report — the
+  // same ⋯ the volatility rows carry, so the two lists behave alike.
+  const more = el('button', 'vmore', '⋯');
+  more.title = 'Full report — trend, levels, flow, news and whether there is a trade in it';
+  more.onclick = e => { e.stopPropagation(); openCoin(w.market, w.symbol); };
+  head.appendChild(more);
+
   const x = el('button', 'x', '✕');
   x.onclick = e => { e.stopPropagation(); removeWatch(w.id); };
   head.appendChild(x);

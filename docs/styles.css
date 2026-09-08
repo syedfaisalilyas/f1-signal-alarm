@@ -82,7 +82,9 @@ main{max-width:1400px;margin:0 auto;padding:0 16px}
 .card.pulse{animation:pulse 1.4s ease-out}
 @keyframes pulse{0%{box-shadow:0 0 0 0 rgba(255,176,46,.5)}100%{box-shadow:0 0 0 22px rgba(255,176,46,0)}}
 
-.chead{display:flex;justify-content:space-between;align-items:flex-start;gap:8px;margin-bottom:10px}
+.chead{display:flex;justify-content:space-between;align-items:flex-start;gap:4px;margin-bottom:10px}
+.chead .sym{margin-right:auto}
+.chead button.vmore{justify-self:auto;width:22px;font-size:16px;margin-top:-2px}
 .sym{display:flex;align-items:center;gap:7px;flex-wrap:wrap}
 .sym b{font-size:16px;letter-spacing:-.01em}
 .iv{font-size:11px;color:var(--dim);background:var(--panel2);padding:2px 7px;border-radius:6px}
