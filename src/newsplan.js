@@ -232,7 +232,17 @@ export function backtest({ events, bars, instrument, symbol, windowMin = 30 }) {
   const closed = bars.filter(b => b.closed);
   const out = [];
 
+  // Releases land in clusters — Japan prints Final GDP q/q and Final GDP Price
+  // Index y/y in the same second, and both produced an identical trade that got
+  // counted twice. One timestamp is one trade; keep the loudest title on it.
+  const byTime = new Map();
   for (const e of events) {
+    const prev = byTime.get(e.at);
+    if (!prev || (e.rank || 0) > (prev.rank || 0)) byTime.set(e.at, e);
+  }
+  const deduped = [...byTime.values()].sort((a, b) => b.at - a.at);
+
+  for (const e of deduped) {
     const reaction = reactionFor(instrument, symbol, e.title, e.currency);
     if (!reaction) continue;
     const before = closed.filter(b => b.closeTime <= e.at);
@@ -242,6 +252,16 @@ export function backtest({ events, bars, instrument, symbol, windowMin = 30 }) {
     const price = before.at(-1).c;
     const plan = planFor({ event: e, reaction, price, bars: before, priorRanges: [] });
     if (!plan) continue;
+
+    // Score only what the panel would actually have told you to take. It
+    // refuses a release whose typical move is smaller than the range you must
+    // risk, so counting those as losses scores a trade the app told you to skip
+    // — which is how a scorecard fills with defeats nobody would have suffered.
+    if (plan.verdict !== 'take') {
+      out.push({ at: e.at, title: e.title, currency: e.currency, impact: e.impact,
+        outcome: 'skipped', note: plan.verdictWhy, direction: null, rMultiple: null, skipped: true });
+      continue;
+    }
 
     // Which branch the market chose: the first of the two entries that traded.
     let taken = null;
@@ -285,16 +305,28 @@ export function backtest({ events, bars, instrument, symbol, windowMin = 30 }) {
     });
   }
 
-  const scored = out.filter(t => typeof t.rMultiple === 'number' && isFinite(t.rMultiple));
-  const wins = scored.filter(t => t.rMultiple > 0).length;
+  // A trade that reached neither stop nor target inside the window is not a
+  // loss — it is unfinished, and folding it into a win rate misreports both.
+  // Win rate is computed on resolved trades only; the R total includes the
+  // open ones marked to market, which is what an account would actually show.
+  const taken = out.filter(t => typeof t.rMultiple === 'number' && isFinite(t.rMultiple));
+  const resolved = taken.filter(t => t.outcome === 'target' || t.outcome === 'stopped');
+  const wins = resolved.filter(t => t.rMultiple > 0).length;
   return {
     trades: out.sort((a, b) => b.at - a.at),
-    summary: scored.length ? {
-      count: scored.length,
+    summary: taken.length ? {
+      count: taken.length,
+      resolved: resolved.length,
+      unresolved: taken.length - resolved.length,
+      skipped: out.filter(t => t.skipped).length,
       wins,
-      losses: scored.length - wins,
-      winRate: Math.round(wins / scored.length * 100),
-      totalR: +scored.reduce((s, t) => s + t.rMultiple, 0).toFixed(2)
-    } : null
+      losses: resolved.length - wins,
+      winRate: resolved.length ? Math.round(wins / resolved.length * 100) : null,
+      totalR: +taken.reduce((s, t) => s + t.rMultiple, 0).toFixed(2)
+    } : {
+      count: 0, resolved: 0, unresolved: 0,
+      skipped: out.filter(t => t.skipped).length,
+      wins: 0, losses: 0, winRate: null, totalR: 0
+    }
   };
 }

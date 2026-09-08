@@ -1184,15 +1184,18 @@ function renderNews(n) {
     <h4>Every trade this rule gave — last 7 days</h4>
     ${sum ? `
     <div class="cgrid">
-      <div><em>trades</em><b>${sum.count}</b></div>
-      <div><em>win rate</em><b class="${sum.winRate >= 50 ? 'up' : 'down'}">${sum.winRate}%</b></div>
-      <div><em>won / lost</em><b>${sum.wins} / ${sum.losses}</b></div>
+      <div><em>taken</em><b>${sum.count}</b></div>
+      <div><em>skipped</em><b class="dim">${sum.skipped}</b></div>
+      <div><em>win rate</em><b class="${sum.winRate == null ? 'dim' : sum.winRate >= 50 ? 'up' : 'down'}">${
+        sum.winRate == null ? '—' : sum.winRate + '%'}</b></div>
       <div><em>total</em><b class="${scoreCls}">${sum.totalR >= 0 ? '+' : ''}${sum.totalR}R</b></div>
-    </div>` : ''}
+    </div>
+    ${sum.count === 0 ? `<div class="cnote">Nothing was worth taking this week — ${sum.skipped} release${sum.skipped === 1 ? '' : 's'} came up and every one failed the test above: the move each usually makes was smaller than the range you would have had to risk. That is the rule working, not the rule failing. The prints that pay — CPI, PPI, jobs, the Fed — land Thursday and Friday.</div>`
+      : sum.unresolved ? `<div class="cnote">${sum.resolved} of ${sum.count} reached a stop or a target inside the half hour; the other ${sum.unresolved} ended the window in between and are marked to market. Win rate counts only the ones that resolved.</div>` : ''}` : ''}
     ${r.trades?.length ? `<div class="ntrades">${r.trades.map(t => `
-      <div class="ntrade ${t.outcome === 'target' ? 'win' : t.outcome === 'stopped' ? 'loss' : t.outcome === 'no trade' ? 'skip' : 'open'}">
+      <div class="ntrade ${t.outcome === 'target' ? 'win' : t.outcome === 'stopped' ? 'loss' : (t.outcome === 'no trade' || t.skipped) ? 'skip' : 'open'}">
         <div class="ntop">
-          <span class="pill ${t.side === 'LONG' ? 'up' : t.side === 'SHORT' ? 'down' : 'dim'}">${t.side || 'NO TRADE'}</span>
+          <span class="pill ${t.side === 'LONG' ? 'up' : t.side === 'SHORT' ? 'down' : 'dim'}">${t.skipped ? 'SKIPPED' : t.side || 'NO TRADE'}</span>
           <b>${t.currency} ${t.title}</b>
           <span class="tag">${t.impact}</span>
           <span class="nres ${t.rMultiple > 0 ? 'up' : t.rMultiple < 0 ? 'down' : 'dim'}">${
@@ -1204,8 +1207,10 @@ function renderNews(n) {
       </div>`).join('')}</div>`
       : '<div class="cnote">no releases in the last seven days that this rule has a view on</div>'}
     <div class="cnote">Each row is the plan above, applied to a release that already happened, then walked forward
-      through the 5-minute candles. A bar that touches both stop and target counts as a loss — with only OHLC there is
-      no way to know which came first, and the pessimistic read is the one that does not flatter the rule.</div>`;
+      through the 5-minute candles. Rows marked SKIPPED are ones the rule refused before the fact — they are shown so
+      you can see what it passed on, and they are not counted against it. A bar that touches both stop and target counts
+      as a loss: with only OHLC there is no way to know which came first, and the pessimistic read is the one that
+      cannot flatter the rule.</div>`;
 
   // ── the rest of the calendar, each with its direction ──
   const upcoming = n.upcoming?.length ? `<div class="ncal">` + n.upcoming.map(e => `
