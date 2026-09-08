@@ -290,6 +290,26 @@
 
     <div class="channels" id="channels"></div>
 
+    <h4>Telegram alerts — which coins</h4>
+    <div class="syncbox" id="syncBox">
+      <div class="syncstatus" id="syncStatus">checking…</div>
+      <p class="dim" style="font-size:11px;margin:6px 0">
+        The scanner that sends Telegram runs on GitHub, not in this tab, so it needs
+        the watchlist committed to the repo. With a token below, every coin you add
+        or remove here is pushed automatically and alerts follow within 5 minutes —
+        add a coin, get its alerts; remove it, they stop; empty list, silence.
+        Board-wide sweeps stay off, so nothing you did not add can alert.
+      </p>
+      <label class="row" style="align-items:flex-start"><span>GitHub token<br>
+        <span class="dim" style="font-size:11px">Fine-grained, this repo only, <b>Contents: read and write</b>.
+        Kept in this browser only. <a href="https://github.com/settings/personal-access-tokens/new" target="_blank" rel="noopener">Create one</a></span></span></label>
+      <input type="password" id="ghToken" placeholder="github_pat_… (leave blank to stop syncing)" autocomplete="off">
+      <div class="syncbtns">
+        <button id="syncNow" class="btn">Sync now</button>
+        <button id="syncSave" class="btn primary">Save token</button>
+      </div>
+    </div>
+
     <h4>Alerts</h4>
     <label class="row"><span>Pre-alerts (signal forming)</span><input type="checkbox" id="preAlerts" checked></label>
     <label class="row"><span>Exit alerts (TP / SL hit)</span><input type="checkbox" id="exitAlerts" checked></label>

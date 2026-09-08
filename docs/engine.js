@@ -25,6 +25,7 @@ import { buildMessage } from './src/notify.js';
 import { filterTrades, aggregate, coverage } from './src/history.js';
 import { resolve as resolveInstrument } from './src/symbols.js';
 import { newsFor, seed as seedNews } from './src/news.js';
+import { scheduleSync, syncNow, checkSync, getToken, setToken, onStatus, getStatus } from './cloudsync.js';
 
 // ─── persistence: localStorage instead of data/state.json ───
 const KEY = 'f1cloudstate';
@@ -36,7 +37,39 @@ function load() {
 }
 
 const state = load();
-const save = () => { try { localStorage.setItem(KEY, JSON.stringify(state)); } catch { /* private mode */ } };
+
+// What the scheduled scanner reads. Its shape is cloud/watchlist.json exactly.
+// ignition and hotHours are forced off: both sweep the whole board and alert on
+// coins that were never added here, which defeats the point of this sync.
+function watchlistPayload() {
+  return {
+    watches: state.watches.map(w => ({
+      id: w.id, enabled: w.enabled !== false, cfg: w.cfg || {},
+      addedAt: w.addedAt || Date.now(), market: w.market, symbol: w.symbol, interval: w.interval
+    })),
+    settings: {
+      ...state.settings,
+      ignition: { ...(state.settings.ignition || {}), enabled: false },
+      hotHours: { ...(state.settings.hotHours || {}), enabled: false }
+    }
+  };
+}
+
+const save = () => {
+  try { localStorage.setItem(KEY, JSON.stringify(state)); } catch { /* private mode */ }
+};
+
+// Persist locally AND push the list to the scanner. Every caller that changes
+// what should be alerted on uses this instead of save().
+const saveAndSync = () => { save(); scheduleSync(watchlistPayload); };
+
+// So app.js can drive the settings UI without importing this module.
+window.__cloudSync = {
+  getToken, setToken, getStatus, onStatus,
+  syncNow: () => syncNow(watchlistPayload),
+  check: () => checkSync(watchlistPayload)
+};
+setTimeout(() => checkSync(watchlistPayload), 1500);
 
 // ─── the same engine the server runs ───
 const feed = new Feed(() => state.settings.cfg || {});
@@ -294,7 +327,7 @@ async function route(path, params, method, body) {
     if (state.watches.some(w => w.id === id)) return json({ error: 'already watching that symbol + timeframe' }, 409);
     const w = { id, market, symbol: symbol.toUpperCase(), interval, enabled: true, cfg: {}, addedAt: Date.now() };
     state.watches.push(w);
-    save();
+    saveAndSync();
     await feed.add(w);
     broadcast('watches', feed.snapshot());
     return json(w);
@@ -306,7 +339,7 @@ async function route(path, params, method, body) {
       feed.remove(id);
       const i = state.watches.findIndex(w => w.id === id);
       if (i >= 0) state.watches.splice(i, 1);
-      save();
+      saveAndSync();
       broadcast('watches', feed.snapshot());
       return json({ ok: i >= 0 });
     }
@@ -314,7 +347,7 @@ async function route(path, params, method, body) {
       const w = state.watches.find(x => x.id === id);
       if (!w) return json({ error: 'not found' }, 404);
       Object.assign(w, body || {});
-      save();
+      saveAndSync();
       if (body?.cfg) feed.reconfigure(id, w.cfg);
       broadcast('watches', feed.snapshot());
       return json(w);

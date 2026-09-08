@@ -20,6 +20,7 @@ import { hotSweep, hotMessage, HOT_DEFAULTS } from './src/hotwatch.js';
 import { refresh as refreshLeverage, loaded as levLoaded, sourceName as levSourceName, setOverrides } from './src/leverage.js';
 import { resolve as resolveInstrument, INSTRUMENTS } from './src/symbols.js';
 import { newsFor, calendar as newsCalendar } from './src/news.js';
+import fs from 'fs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const app = express();
@@ -241,6 +242,32 @@ app.get('/api/search', async (req, res) => {
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
+// The scheduled scanner reads cloud/watchlist.json, not data/state.json, so a
+// coin added here had to be synced by hand before Telegram knew about it. Now
+// every change writes that file straight away — it still needs committing to
+// reach the runner, but it can no longer silently drift out of date.
+//
+// Both board-wide sweeps are forced off: they alert on whatever the whole
+// market is doing, which is exactly what "only the coins I added" rules out.
+function writeCloudWatchlist() {
+  try {
+    const s = store.get();
+    const file = path.join(__dirname, 'cloud', 'watchlist.json');
+    const next = {
+      watches: s.watches,
+      settings: {
+        ...s.settings,
+        ignition: { ...(s.settings.ignition || {}), enabled: false },
+        hotHours: { ...(s.settings.hotHours || {}), enabled: false }
+      }
+    };
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    fs.writeFileSync(file, JSON.stringify(next, null, 2));
+  } catch (e) {
+    console.warn('[watchlist] could not write cloud/watchlist.json —', e.message);
+  }
+}
+
 app.get('/api/watches', (_req, res) => res.json(feed.snapshot()));
 
 app.post('/api/watches', async (req, res) => {
@@ -249,6 +276,7 @@ app.post('/api/watches', async (req, res) => {
   const w = store.addWatch({ market, symbol: symbol.toUpperCase(), interval, cfg: {} });
   if (!w) return res.status(409).json({ error: 'already watching that symbol + timeframe' });
   await feed.add(w);
+  writeCloudWatchlist();
   broadcast('watches', feed.snapshot());
   res.json(w);
 });
@@ -257,6 +285,7 @@ app.delete('/api/watches/:id', (req, res) => {
   const id = decodeURIComponent(req.params.id);
   feed.remove(id);
   const ok = store.removeWatch(id);
+  writeCloudWatchlist();
   broadcast('watches', feed.snapshot());
   res.json({ ok });
 });
@@ -266,6 +295,7 @@ app.patch('/api/watches/:id', (req, res) => {
   const w = store.updateWatch(id, req.body || {});
   if (!w) return res.status(404).json({ error: 'not found' });
   if (req.body.cfg) feed.reconfigure(id, w.cfg);
+  writeCloudWatchlist();
   broadcast('watches', feed.snapshot());
   res.json(w);
 });

@@ -1491,3 +1491,36 @@ function renderLogTimes() {
 
 connect();
 if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(() => {});
+
+
+// ─────────── watchlist → Telegram scanner ───────────
+//
+// Only the hosted build has this: the local server writes cloud/watchlist.json
+// itself, so the panel hides when there is nothing to drive.
+(function initCloudSync() {
+  const box = document.getElementById('syncBox');
+  if (!box) return;
+  const cs = window.__cloudSync;
+  if (!cs) { box.style.display = 'none'; return; }
+
+  const statusEl = document.getElementById('syncStatus');
+  const tokenEl = document.getElementById('ghToken');
+
+  const paint = st => {
+    statusEl.className = 'syncstatus ' + (st.state || 'idle');
+    statusEl.textContent = st.text || 'idle';
+  };
+  paint(cs.getStatus());
+  cs.onStatus(paint);
+
+  if (cs.getToken()) tokenEl.value = cs.getToken();
+
+  document.getElementById('syncSave').onclick = () => {
+    cs.setToken(tokenEl.value);
+    if (tokenEl.value.trim()) cs.syncNow(); else paint({ state: 'off', text: 'syncing off — the scanner keeps the last committed list' });
+  };
+  document.getElementById('syncNow').onclick = () => {
+    if (!cs.getToken()) { cs.setToken(tokenEl.value); }
+    cs.syncNow();
+  };
+})();

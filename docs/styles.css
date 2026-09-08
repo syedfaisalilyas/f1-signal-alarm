@@ -479,3 +479,16 @@ button.resmore:hover{color:var(--info);background:var(--panel2)}
 .plan .size{color:var(--info)}
 .plan .size b{color:var(--info)}
 .plan .size em{font-style:normal;color:var(--faint);font-size:10px;margin-left:5px}
+
+
+/* ── watchlist → scanner sync ── */
+.syncbox{border:1px solid var(--line);border-radius:10px;padding:12px;background:var(--panel2);margin-bottom:6px}
+.syncstatus{font-size:12px;font-weight:600;display:flex;align-items:center;gap:7px}
+.syncstatus::before{content:'';width:8px;height:8px;border-radius:50%;background:var(--faint);flex:none}
+.syncstatus.ok{color:var(--up)} .syncstatus.ok::before{background:var(--up)}
+.syncstatus.error{color:var(--down)} .syncstatus.error::before{background:var(--down)}
+.syncstatus.stale,.syncstatus.pending{color:var(--warn)} .syncstatus.stale::before,.syncstatus.pending::before{background:var(--warn)}
+.syncstatus.off{color:var(--faint)}
+.syncbtns{display:flex;gap:8px;margin-top:9px}
+.syncbtns .btn{flex:1}
+#ghToken{width:100%;box-sizing:border-box}
