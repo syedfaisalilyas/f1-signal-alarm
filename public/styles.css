@@ -557,3 +557,12 @@ button.resmore:hover{color:var(--info);background:var(--panel2)}
 .nverdict.take{border-color:#1d4a2c}
 .nverdict.skip{border-color:#4a3a1a}
 .nxplans.muted{opacity:.55}
+
+/* ── plain-English: what this release actually is ── */
+.nxwhat{margin-top:12px;padding:11px 12px;border-radius:9px;background:var(--panel);border:1px solid var(--line)}
+.whatq{font-size:10px;text-transform:uppercase;letter-spacing:.06em;color:var(--faint);margin-bottom:5px}
+.whatis{font-size:13px;font-weight:600;line-height:1.5;margin-bottom:6px}
+.whatplain{font-size:12px;line-height:1.65;color:var(--dim)}
+.ncalrow{row-gap:3px}
+.ncwhat{grid-column:2 / -1;font-size:11px;line-height:1.5;padding-bottom:2px}
+@media(max-width:640px){.ncwhat{grid-column:1 / -1}}

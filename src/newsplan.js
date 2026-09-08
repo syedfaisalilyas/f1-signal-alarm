@@ -29,28 +29,52 @@ import { atr as atrSeries } from './indicators.js';
 // CPI is a better number for the dollar and a worse one for gold.
 const GOLD_RULES = [
   { re: /core cpi|^cpi|consumer price/i, higher: 'down', weight: 3,
+    what: 'The shopping-bill number — how much more everything costs. "m/m" is versus last month, "y/y" versus last year, and "Core" leaves out food and fuel because those jump around for reasons the central bank cannot control.',
+    plain: 'Prices rising faster than expected means the central bank keeps interest rates high to cool things down. High rates make cash and bonds pay well, and gold pays nothing at all — so people sell gold to hold those instead.',
     why: 'hot inflation keeps the Fed tight — real yields rise, and gold pays no yield to compete' },
   { re: /core ppi|^ppi|producer price/i, higher: 'down', weight: 2,
+    what: 'What factories and wholesalers charge shops — the price of things before they reach you. "Core" leaves out food and fuel.',
+    plain: 'These costs get passed on to you a month or two later, so this is an early warning on inflation. Hotter than expected points to rates staying high, which hurts gold.',
     why: 'producer prices feed consumer inflation, so a hot print points at a tighter Fed' },
   { re: /non-?farm|nfp|employment change|payroll/i, higher: 'down', weight: 3,
+    what: 'How many jobs America added last month. The biggest scheduled number there is.',
+    plain: 'Lots of new jobs means a strong economy, which lets the central bank keep rates high without hurting anyone. High rates are bad for gold. Fewer jobs is the opposite — rate cuts get priced in and gold rallies.',
     why: 'a strong labour market lets the Fed stay tight — dollar and yields up, gold down' },
   { re: /unemployment claims|jobless/i, higher: 'up', weight: 2,
+    what: 'How many people filed for jobless benefits last week.',
+    plain: 'This one is backwards from what it sounds like. MORE people losing jobs means a weakening economy, which forces the central bank to cut rates, which is GOOD for gold. So a bigger number sends gold up.',
     why: 'more claims is a weaker labour market, which pulls the Fed dovish — gold bid' },
   { re: /unemployment rate/i, higher: 'up', weight: 2,
+    what: 'The share of people who want a job and cannot find one.',
+    plain: 'Also backwards. A higher jobless rate means a struggling economy, which means rate cuts are coming, which lifts gold.',
     why: 'a rising jobless rate is dovish pressure on the Fed, and gold gains when cuts get priced' },
   { re: /federal funds|rate decision|main refinancing|bank rate|official cash/i, higher: 'down', weight: 3,
+    what: 'The central bank actually setting the interest rate.',
+    plain: 'This is the thing everything else is guessing about. A higher rate pays you more to sit in cash, and gold pays nothing — so gold falls. A cut does the reverse.',
     why: 'a higher policy rate raises the return on holding cash instead of metal' },
   { re: /fomc|monetary policy statement|powell|press conference/i, higher: 'down', weight: 3,
+    what: 'The head of the central bank explaining what they plan to do next.',
+    plain: 'No number here — it is about tone. Sounding worried about inflation ("hawkish") means rates stay high and gold drops. Sounding worried about jobs ("dovish") means cuts, and gold jumps. These can move more than the data itself.',
     why: 'hawkish guidance lifts real yields, which is what gold competes against' },
   { re: /retail sales/i, higher: 'down', weight: 2,
+    what: 'How much people actually spent in shops last month.',
+    plain: 'Strong spending means the economy is fine and there is no reason to cut rates. That firms the dollar and pushes gold down.',
     why: 'strong consumption argues against cuts, firming the dollar' },
   { re: /\bgdp\b/i, higher: 'down', weight: 2,
+    what: 'The size of the entire economy — is it growing or shrinking.',
+    plain: 'Faster growth means no need for rate cuts, which is bad for gold. A shrinking economy means cuts are coming, which is good for gold.',
     why: 'faster growth reduces the case for easing' },
   { re: /inflation expectations/i, higher: 'up', weight: 1,
+    what: 'What ordinary people think prices will do over the next year.',
+    plain: 'When people expect prices to keep climbing, they buy gold as protection. That demand can lift gold even while rates are high — which is why this one points up, not down.',
     why: 'gold is bought as the hedge when expected inflation rises, even as yields firm' },
   { re: /consumer sentiment|confidence/i, higher: 'down', weight: 1,
+    what: 'A survey asking people how good they feel about their money.',
+    plain: 'Confident people spend, spending keeps the economy warm, and a warm economy means no rate cuts. Mildly bad for gold. This is a soft survey though, so it moves things far less than real data.',
     why: 'a confident consumer supports the growth-and-tight-policy read' },
   { re: /ism|pmi|manufacturing|services/i, higher: 'down', weight: 1,
+    what: 'A survey of company managers. Above 50 means business is growing, below 50 means shrinking.',
+    plain: 'Growth argues for keeping rates high for longer, which weighs on gold. A weak reading points at cuts and lifts it.',
     why: 'expansion readings argue for tighter policy for longer' }
 ];
 
@@ -81,6 +105,10 @@ export function reactionFor(instrument, symbol, title, currency = 'USD') {
     const higher = foreign ? (hit.higher === 'up' ? 'down' : 'up') : hit.higher;
     return {
       higher, weight: foreign ? Math.max(1, hit.weight - 1) : hit.weight,
+      what: hit.what,
+      plain: foreign
+        ? `${hit.plain} This one is not a US release, though, so for gold it works backwards: a strong ${currency} number means a weaker dollar, and gold is priced in dollars — so gold goes the other way, and by less.`
+        : hit.plain,
       why: foreign
         ? `${hit.why.replace(/the Fed/g, `the ${currency} central bank`)} — and for gold that runs through a softer dollar, so the effect is inverted and weaker`
         : hit.why
@@ -92,7 +120,11 @@ export function reactionFor(instrument, symbol, title, currency = 'USD') {
   if (!legs || legs.length < 2) return null;
   const hit = FX_STRENGTHENS.find(r => r.re.test(title));
   if (!hit) return null;
-  return { higher: hit.higher, why: hit.why, weight: hit.weight, fx: true, base: legs[0], quote: legs[1] };
+  const g = GOLD_RULES.find(r => r.re.test(title));
+  return { higher: hit.higher, why: hit.why, weight: hit.weight, fx: true,
+    what: g?.what || null,
+    plain: g ? `${g.what} For a currency pair the logic is simpler than for gold: a strong number lifts that country's own currency, because it brings interest-rate rises closer.` : null,
+    base: legs[0], quote: legs[1] };
 }
 
 // Turn that into a direction for THIS pair: strengthening the base currency

@@ -1130,6 +1130,12 @@ function renderNews(n) {
         <div><em>previous</em><b>${nx.previous || '—'}</b></div>
         <div><em>expected move</em><b>${n.plan ? n.plan.expectedMovePct + '%' : '—'}</b></div>
       </div>
+      ${react && react.what ? `
+      <div class="nxwhat">
+        <div class="whatq">What even is this?</div>
+        <div class="whatis">${react.what}</div>
+        <div class="whatplain">${react.plain}</div>
+      </div>` : ''}
       ${react ? `
       <div class="nxpred">
         <div class="predrow ${dcls(react.onBeat)}">
@@ -1210,6 +1216,7 @@ function renderNews(n) {
       <span class="ncfc dim">${e.forecast ? 'f ' + e.forecast : ''}${e.previous ? ' / p ' + e.previous : ''}</span>
       <span class="ncdir ${e.reaction ? dcls(e.reaction.onBeat) : 'dim'}">${
         e.reaction ? arrow(e.reaction.onBeat) + ' if above' : '—'}</span>
+      ${e.reaction?.what ? `<span class="ncwhat dim">${e.reaction.what}</span>` : ''}
     </div>`).join('') + `</div>`
     : '<div class="cnote">calendar is quiet for this instrument</div>';
 

@@ -372,6 +372,8 @@ export async function newsFor({ market, symbol, instrument, days = 14 }) {
     e.reaction = {
       onBeat: directionFor(r, e.currency),
       onMiss: directionFor(r, e.currency) === 'up' ? 'down' : 'up',
+      what: r.what || null,
+      plain: r.plain || null,
       why: r.why,
       confidence: r.weight >= 3 ? 'high' : r.weight === 2 ? 'medium' : 'low'
     };
