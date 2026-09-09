@@ -18,6 +18,9 @@
 
 import { fetchCandles } from './providers.js';
 import { mexcSymbol } from './geofeed.js';
+// Prices in these lines have to read the same as prices everywhere else in the
+// report — 4,444.38, not 4444.3779 — and that convention already lives here.
+import { fmtPrice } from './coinreport.js';
 
 const FAPI = 'https://fapi.binance.com/fapi/v1';
 const FDATA = 'https://fapi.binance.com/futures/data';
@@ -86,9 +89,10 @@ export async function netflow({ market, symbol, interval = '5m', limit = 240 }) 
   const turnover = sum(rows.map(r => r.buys + r.sells));
   const green = nets.filter(n => n > 0).length;
 
-  return {
+  const out = {
     interval, venue, symbol, at: Date.now(),
     bars: rows,
+    lean: null,          // filled below, once the totals it reads are built
     spanMs: rows.length > 1 ? rows.at(-1).t - rows[0].t : 0,
     totals: {
       inflow, outflow, net, turnover,
@@ -100,6 +104,8 @@ export async function netflow({ market, symbol, interval = '5m', limit = 240 }) 
       biggest: rows.reduce((a, b) => Math.abs(b.net) > Math.abs(a.net) ? b : a, rows[0])
     }
   };
+  out.lean = netflowLean(rows, out.totals);
+  return out;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -210,6 +216,7 @@ export async function longShort({ symbol, period = '1h' }) {
   return {
     symbol: perp, period, at: Date.now(), price,
     taker, takerAll, accounts, accountsAll, top,
+    lean: longShortLean(takerAll, accountsAll),
     read: reading(takerAll, accountsAll, top),
     venuesMissing: ['Binance', 'Bybit', 'Bitget', 'Gate']
       .filter(v => !taker.some(r => r.venue === v) && !accounts.some(r => r.venue === v))
@@ -306,14 +313,20 @@ export async function liquidationMap({ symbol, window = '12h' }) {
   const bucket = p => Math.floor((p - lo) / step);
   const prices = Array.from({ length: PRICE_BUCKETS }, (_, i) => lo + step * (i + 0.5));
 
-  const open = new Float64Array(PRICE_BUCKETS);   // leverage still alive at each price
+  // Long and short leverage are tracked apart, even though the heatmap paints
+  // their sum. Which side dies at a shelf is the whole directional read: a
+  // shelf of shorts is forced BUYING when it goes, a shelf of longs is forced
+  // selling. Adding them first and guessing the side back from geometry gets
+  // that wrong every time the window has trended.
+  const openL = new Float64Array(PRICE_BUCKETS);
+  const openS = new Float64Array(PRICE_BUCKETS);
   const grid = [];
   let cleared = 0;
 
   for (const b of bars) {
     // 1. anything this candle traded through has already been liquidated.
     const from = Math.max(0, bucket(b.l)), to = Math.min(PRICE_BUCKETS - 1, bucket(b.h));
-    for (let i = from; i <= to; i++) { cleared += open[i]; open[i] = 0; }
+    for (let i = from; i <= to; i++) { cleared += openL[i] + openS[i]; openL[i] = 0; openS[i] = 0; }
 
     // 2. positions opened inside this candle. Which side opened is read from
     //    the taker split when the feed has one — the impatient side is the one
@@ -324,11 +337,11 @@ export async function liquidationMap({ symbol, window = '12h' }) {
     for (const t of TIERS) {
       const longLiq = bucket(entry * (1 - 1 / t.lev));
       const shortLiq = bucket(entry * (1 + 1 / t.lev));
-      if (longLiq >= 0 && longLiq < PRICE_BUCKETS) open[longLiq] += notional * t.weight * longShare;
-      if (shortLiq >= 0 && shortLiq < PRICE_BUCKETS) open[shortLiq] += notional * t.weight * (1 - longShare);
+      if (longLiq >= 0 && longLiq < PRICE_BUCKETS) openL[longLiq] += notional * t.weight * longShare;
+      if (shortLiq >= 0 && shortLiq < PRICE_BUCKETS) openS[shortLiq] += notional * t.weight * (1 - longShare);
     }
 
-    grid.push(Float64Array.from(open));
+    grid.push(Float64Array.from(openL, (v, i) => v + openS[i]));
   }
 
   const peak = Math.max(...grid.map(col => Math.max(...col)));
@@ -339,7 +352,7 @@ export async function liquidationMap({ symbol, window = '12h' }) {
   // Where the surviving leverage sits now, as levels you can actually name.
   const last = grid.at(-1);
   const price = bars.at(-1).c;
-  const shelves = Array.from(last, (v, i) => ({ price: prices[i], mag: v }))
+  const shelves = Array.from(last, (v, i) => ({ price: prices[i], mag: v, longs: openL[i], shorts: openS[i] }))
     .filter(x => x.mag > peak * 0.12)
     .sort((a, b) => b.mag - a.mag)
     .slice(0, 6)
@@ -348,7 +361,11 @@ export async function liquidationMap({ symbol, window = '12h' }) {
       distPct: r2((x.price - price) / price * 100),
       intensity: Math.round(x.mag / peak * 100),
       usd: Math.round(x.mag),
-      side: x.price < price ? 'below' : 'above'
+      side: x.price < price ? 'below' : 'above',
+      // Whose stops are these. A shelf can hold both — the majority is what
+      // moves price when it goes.
+      kind: x.shorts > x.longs ? 'shorts' : 'longs',
+      shortSharePct: x.mag > 0 ? r2(x.shorts / x.mag * 100) : null
     }))
     .sort((a, b) => b.price - a.price);
 
@@ -359,7 +376,7 @@ export async function liquidationMap({ symbol, window = '12h' }) {
     times: bars.map(b => b.t),
     candles: bars.map(b => ({ t: b.t, o: b.o, h: b.h, l: b.l, c: b.c })),
     cols, peakUsd: Math.round(peak), clearedUsd: Math.round(cleared),
-    shelves,
+    shelves, lean: liqLean(shelves, price),
     actual: await gateLiquidations(symbol).catch(() => null)
   };
 }
@@ -375,4 +392,99 @@ async function gateLiquidations(symbol) {
   const shortUsd = sum(rows.map(r => +r.short_liq_usd_new || +r.short_liq_usd || 0));
   if (!(longUsd + shortUsd > 0)) return null;
   return { venue: 'Gate', hours: rows.length, longUsd, shortUsd };
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// which way each panel points
+// ─────────────────────────────────────────────────────────────────────────────
+//
+// Each panel states a fact and leaves the reader to draw the arrow. These draw
+// it. One line, one direction, and the mechanism named — because the mechanism
+// is the part that tells you when the line stops being true.
+//
+// They are single-indicator reads, deliberately. Three panels leaning the same
+// way is worth something; one of them leaning on its own is a hint, and the
+// report's own verdict at the top of the page is still the one that weighs
+// everything together.
+
+const lean = (dir, text) => ({ dir, text });
+
+// Netflow: does the money agree with the candle? Flow that confirms price is a
+// trend; flow that fights it is absorption, and absorption is the one that
+// pays, because it front-runs the turn rather than the continuation.
+function netflowLean(rows, totals) {
+  const first = rows[0].price, last = rows.at(-1).price;
+  const pxChg = first > 0 ? (last - first) / first * 100 : 0;
+  const share = totals.netSharePct ?? 0;
+  const moved = Math.abs(pxChg) >= 0.15;
+  const priceUp = moved && pxChg > 0, priceDown = moved && pxChg < 0;
+
+  // Under half a percent of turnover is a rounding error on the day, not a side.
+  if (Math.abs(share) < 0.5) return lean('FLAT',
+    `Net flow is ${share}% of everything traded here — inside the noise. There is no direction in this panel right now.`);
+
+  if (share > 0) return priceDown
+    ? lean('UP', `Price is DOWN ${Math.abs(r2(pxChg))}% while market buyers keep paying the spread — net +${share}% of turnover. Sellers are being absorbed, and that leans UP.`)
+    : lean('UP', `Buyers are the ones paying up — net +${share}% of turnover${priceUp ? ` with price up ${r2(pxChg)}%` : ''}. Flow is behind the move: UP.`);
+
+  return priceUp
+    ? lean('DOWN', `Price is UP ${r2(pxChg)}% on net selling — ${share}% of turnover. The rally has no sponsorship behind it, which leans DOWN.`)
+    : lean('DOWN', `Sellers are the ones paying up — ${share}% of turnover${priceDown ? ` with price down ${Math.abs(r2(pxChg))}%` : ''}. Flow is behind the move: DOWN.`);
+}
+
+// The book: the crowd is the fade, the flow is the follow.
+//
+// The crowd read is contrarian for a reason worth stating — a crowded side is
+// not wrong, it is ALREADY IN. It has no buying left to do and a stop under it,
+// so the path of least resistance runs the other way. Retail sits net long
+// almost permanently, which is why 60% is the line here and not 50%.
+function longShortLean(takerAll, accountsAll) {
+  const crowd = accountsAll?.longPct, flow = takerAll?.longPct;
+  if (crowd == null && flow == null) return null;
+
+  if (crowd != null && crowd >= 60) return flow != null && flow <= 50
+    ? lean('DOWN', `${crowd}% of accounts are long and the flow is selling into them (${r2(100 - flow)}% of taker volume). Crowded side, no bid behind it — the fade is DOWN.`)
+    : lean('DOWN', `${crowd}% of accounts are already long. A side that is already in has nothing left to buy and a stop underneath it — the fade is DOWN.`);
+
+  if (crowd != null && crowd <= 45) return flow != null && flow >= 50
+    ? lean('UP', `${r2(100 - crowd)}% of accounts are short and the flow is buying it up (${flow}% of taker volume). Every one of those shorts has to buy to get out — that is squeeze fuel: UP.`)
+    : lean('UP', `${r2(100 - crowd)}% of accounts are short. Getting out means buying, which is the fuel a squeeze runs on — the lean is UP.`);
+
+  if (flow != null && flow >= 55) return lean('UP',
+    `The book is balanced${crowd != null ? ` (${crowd}% long)` : ''}, so the flow decides: ${flow}% of taker volume is lifting the offer. UP.`);
+  if (flow != null && flow <= 45) return lean('DOWN',
+    `The book is balanced${crowd != null ? ` (${crowd}% long)` : ''}, so the flow decides: ${r2(100 - flow)}% of taker volume is hitting the bid. DOWN.`);
+
+  return lean('FLAT',
+    `${crowd != null ? `${crowd}% of accounts long` : 'The book'} and taker flow near even — nobody is crowded and nobody is paying up. No edge in this panel.`);
+}
+
+// The map: price goes where the stops are, and the nearest heavy shelf wins
+// over a bigger one further away — hence pull, not size.
+//
+// Which side dies there is what sets the direction, and it is not the same as
+// which side of price it sits on: a shelf of SHORTS going means forced buying,
+// wherever it sits.
+function liqLean(shelves, price) {
+  if (!shelves.length) return lean('FLAT', 'No cluster survived nearby — there is nothing pulling price in this window.');
+  const pull = s => s.intensity / Math.max(0.35, Math.abs(s.distPct));
+  const best = side => shelves.filter(s => s.side === side).sort((a, b) => pull(b) - pull(a))[0] || null;
+  const up = best('above'), down = best('below');
+
+  const say = (s, dir) => lean(dir,
+    `Nearest heavy shelf is ${fmtPrice(s.price)} — ${s.distPct >= 0 ? '+' : ''}${s.distPct}% away, and it is where ${s.kind} get force-closed. ` +
+    `That is forced ${s.kind === 'shorts' ? 'BUYING' : 'SELLING'} once price reaches it, so the pull is ${dir}.`);
+
+  if (up && !down) return say(up, up.kind === 'shorts' ? 'UP' : 'DOWN');
+  if (down && !up) return say(down, down.kind === 'shorts' ? 'UP' : 'DOWN');
+
+  const pu = pull(up), pd = pull(down);
+  // Within a quarter of each other the map is a tug of war, and saying so is
+  // more useful than calling a coin flip.
+  if (Math.max(pu, pd) < Math.min(pu, pd) * 1.25) return lean('FLAT',
+    `Price is sitting between two shelves of roughly equal pull — ${fmtPrice(down.price)} below and ${fmtPrice(up.price)} above. ` +
+    'Whichever breaks first, the other becomes the target; there is no lean until one goes.');
+
+  const win = pu > pd ? up : down;
+  return say(win, win.kind === 'shorts' ? 'UP' : 'DOWN');
 }

@@ -1525,6 +1525,17 @@ function wireTip(canvas, describe) {
   canvas.onpointerleave = () => tip.classList.add('hidden');
 }
 
+// The one line each panel leads with: which way this reading points, and the
+// mechanism behind it. Everything under it is the evidence.
+function leanBlock(l) {
+  if (!l) return '';
+  const cls = l.dir === 'UP' ? 'up' : l.dir === 'DOWN' ? 'down' : 'warn';
+  return `<div class="lean ${cls}">
+      <span class="pill big ${cls}">${dirArrow(l.dir === 'FLAT' ? 'FLAT' : l.dir)} ${l.dir}</span>
+      <span>${l.text}</span>
+    </div>`;
+}
+
 const axisFont = ctx => { ctx.font = '10px ui-sans-serif,-apple-system,system-ui,sans-serif'; ctx.textBaseline = 'middle'; };
 const clockAt = ms => new Date(ms).toLocaleString([], { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' });
 const signedMoney = v => (v >= 0 ? '+' : '−') + money(Math.abs(v));
@@ -1539,6 +1550,7 @@ function renderNetflow(host, d) {
   const t = d.totals;
   const where = d.venue === 'spot' ? 'spot' : 'perp';
   host.innerHTML = `
+    ${leanBlock(d.lean)}
     <div class="chartwrap"><canvas class="chart" id="nfCanvas"></canvas><div class="chartip hidden"></div></div>
     <div class="cgrid">
       <div><em>net, this window</em><b class="${t.net >= 0 ? 'up' : 'down'}">${signedMoney(t.net)}</b></div>
@@ -1668,6 +1680,7 @@ function renderLongShort(host, d) {
     </div>`;
 
   host.innerHTML = `
+    ${leanBlock(d.lean)}
     <div class="lshead">Who is paying the spread <span class="dim">taker buy vs sell volume, last ${d.period}</span></div>
     ${taker}
     <div class="lshead">Who is positioned <span class="dim">share of accounts long vs short</span></div>
@@ -1705,11 +1718,13 @@ function renderLiqMap(host, d) {
       <div class="crow">
         <span class="${s.side === 'above' ? 'down' : 'up'}">${fmtPx(s.price)}</span>
         <span class="dim">${s.distPct >= 0 ? '+' : ''}${s.distPct}%</span>
+        <span class="dim">${s.kind}</span>
         <span class="lqmag"><i style="width:${s.intensity}%"></i>${money(s.usd)}</span>
       </div>`).join('')}</div>`;
 
   const a = d.actual;
   host.innerHTML = `
+    ${leanBlock(d.lean)}
     <div class="chartwrap"><canvas class="chart" id="lqCanvas"></canvas><div class="chartip hidden"></div></div>
     <div class="heatkey"><span>less leverage</span><i></i><span>more</span></div>
     ${d.venue === 'spot' ? `<div class="cnote warnnote">There is no perpetual for ${d.symbol}, so this is modelled on spot

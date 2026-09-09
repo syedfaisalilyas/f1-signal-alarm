@@ -36,10 +36,13 @@ const r2 = v => v === null || v === undefined || !isFinite(v) ? null : +v.toFixe
 const px = v => v === null || v === undefined || !isFinite(v) ? null : +v.toPrecision(8);
 
 // Prices span 0.000012 to 90000 here, so a fixed decimal count is useless.
+// Grouped, because these numbers sit in prose beside tables that group — "swept
+// the 4405.60 highs" next to a level column reading 4,405.60 looks like two
+// different prices at a glance.
 export function fmtPrice(p) {
   if (!(p > 0)) return '—';
   const d = p >= 1000 ? 2 : p >= 1 ? 4 : p >= 0.01 ? 5 : p >= 0.0001 ? 6 : 8;
-  return p.toFixed(d);
+  return p.toLocaleString('en-US', { minimumFractionDigits: d, maximumFractionDigits: d });
 }
 
 async function jget(url, ms = 12000) {

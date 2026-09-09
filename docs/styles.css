@@ -264,6 +264,7 @@ button.resmore:hover{color:var(--info);background:var(--panel2)}
 
 .ctable{font-variant-numeric:tabular-nums;font-size:12.5px}
 .crow{display:grid;grid-template-columns:1fr auto auto;gap:10px;padding:4px 0;border-bottom:1px solid var(--line)}
+#lqBody .crow{grid-template-columns:1fr auto auto auto}
 .crow:last-child{border-bottom:0}
 .crow.hi{color:var(--warn);font-weight:600}
 
@@ -286,6 +287,13 @@ button.resmore:hover{color:var(--info);background:var(--panel2)}
 .pnlbody{padding:11px}
 .pnlbody .cgrid div{background:rgba(0,0,0,.22)}
 .pnlbody h5{font-size:11px;text-transform:uppercase;letter-spacing:.05em;color:var(--dim);margin:20px 0 8px}
+
+.lean{display:flex;align-items:flex-start;gap:10px;font-size:12.5px;line-height:1.5;
+  border:1px solid var(--line);border-radius:10px;padding:10px 11px;margin-bottom:12px;background:rgba(0,0,0,.2)}
+.lean.up{border-color:rgba(38,208,124,.4);background:rgba(38,208,124,.07)}
+.lean.down{border-color:rgba(255,84,112,.4);background:rgba(255,84,112,.07)}
+.lean.warn{border-color:rgba(255,176,46,.32);background:rgba(255,176,46,.05)}
+.lean .pill{margin-top:1px}
 
 .chartwrap{position:relative;width:100%}
 .chart{display:block;width:100%;touch-action:pan-y}
