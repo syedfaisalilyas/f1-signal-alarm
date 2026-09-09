@@ -16,6 +16,7 @@ import { VolatilityScanner } from './src/volatility.js';
 import { Screener } from './src/screener.js';
 import { IgnitionScanner } from './src/ignition.js';
 import { coinReport } from './src/coinreport.js';
+import { netflow, longShort, liquidationMap, NETFLOW_INTERVALS, LS_PERIODS, LIQ_WINDOWS } from './src/marketflow.js';
 import { hotSweep, hotMessage, HOT_DEFAULTS } from './src/hotwatch.js';
 import { refresh as refreshLeverage, loaded as levLoaded, sourceName as levSourceName, setOverrides } from './src/leverage.js';
 import { resolve as resolveInstrument, INSTRUMENTS } from './src/symbols.js';
@@ -516,6 +517,46 @@ app.get('/api/coin', async (req, res) => {
       instrument: inst.id, label: inst.label, proxied: inst.proxied, note: inst.note, unit: inst.unit
     });
     res.json(report);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// The three panels under the coin report that each carry their own timeframe.
+// They are separate calls on purpose: changing the netflow interval should not
+// rebuild six trend timeframes, a volume profile and a news calendar with it.
+//
+// All three take a symbol the report already resolved, so no instrument lookup
+// happens here — "gold" became PAXGUSDT before the modal opened.
+const coinSymbol = (req) => {
+  const symbol = (req.query.symbol || '').trim().toUpperCase();
+  if (symbol.length < 3 || symbol.length > 24 || /[\s/?&#]/.test(symbol)) return null;
+  return symbol;
+};
+const coinMarket = (req) => req.query.market === 'spot' ? 'spot' : 'futures';
+
+app.get('/api/coin/netflow', async (req, res) => {
+  try {
+    const symbol = coinSymbol(req);
+    if (!symbol) return res.status(400).json({ error: 'symbol required' });
+    const interval = NETFLOW_INTERVALS.includes(req.query.interval) ? req.query.interval : '5m';
+    res.json(await netflow({ market: coinMarket(req), symbol, interval }));
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+app.get('/api/coin/longshort', async (req, res) => {
+  try {
+    const symbol = coinSymbol(req);
+    if (!symbol) return res.status(400).json({ error: 'symbol required' });
+    const period = LS_PERIODS.includes(req.query.period) ? req.query.period : '1h';
+    res.json(await longShort({ symbol, period }));
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+app.get('/api/coin/liqmap', async (req, res) => {
+  try {
+    const symbol = coinSymbol(req);
+    if (!symbol) return res.status(400).json({ error: 'symbol required' });
+    const window = LIQ_WINDOWS[req.query.window] ? req.query.window : '12h';
+    res.json(await liquidationMap({ symbol, window }));
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 

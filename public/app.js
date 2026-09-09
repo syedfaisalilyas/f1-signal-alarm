@@ -1082,6 +1082,7 @@ async function openCoin(market, symbol, name) {
     if (mine !== coinReq) return;                    // a newer coin was opened meanwhile
     if (d.error) throw new Error(d.error);
     renderCoin(d);
+    if (d.market !== 'forex') loadPanels(mine, d);
     // News is a second request so a slow calendar never holds up the report.
     // Only instruments that trade on a schedule have any — a memecoin has no CPI.
     if (d.instrument || d.market === 'forex') loadNews(mine, d);
@@ -1342,6 +1343,20 @@ function renderCoin(d) {
     ${f.read?.length ? `<div class="clist">${f.read.map(x => `<div>· ${x}</div>`).join('')}</div>` : ''}
     ${f.crowd ? `<div class="cnote crowd">${f.crowd.text}</div>` : ''}`;
 
+  // Netflow, the long/short book and the liquidation map each carry their own
+  // timeframe, so they load after the report rather than inside it — changing
+  // one dropdown should not refetch six trend timeframes and a volume profile.
+  // None of the three has a crypto-exchange answer for a forex pair.
+  const panels = d.market === 'forex' ? '' : `
+    <h4>Spot inflow / outflow</h4>
+    ${panelShell('nf', 'Netflow — market buys minus market sells, in dollars', NF_INTERVALS, '5m')}
+
+    <h4>Long / short ratio</h4>
+    ${panelShell('ls', 'Taker volume and the account book, across four venues', LS_PERIODS, '1h')}
+
+    <h4>Liquidation heatmap</h4>
+    ${panelShell('lq', 'Where leveraged positions would be force-closed', LQ_WINDOWS, '12h')}`;
+
   $('#coinBody').innerHTML = `
     <div class="verdict ${sideCls(p.side)}">
       <div class="vtop"><span class="pill big ${sideCls(p.side)}">${p.side}</span><span>${p.headline}</span></div>
@@ -1398,12 +1413,433 @@ function renderCoin(d) {
     <h4>Order flow &amp; positioning</h4>
     ${flowGrid}
 
+    ${panels}
+
     ${d.proxied && d.note ? `<div class="cnote warnnote">${d.note}. Every level, trend and flow reading below is measured on <b>${d.symbol}</b>, which is what you would actually trade here — a broker's spot ${d.label?.toLowerCase() || 'quote'} will differ by a fraction of a percent.</div>` : ''}
 
     <div id="coinNews"></div>
 
     <div class="cfoot">built ${new Date(d.at).toLocaleTimeString()} · every number is a description of what already happened, not a forecast</div>`;
 }
+
+
+// ─────────── netflow, the long/short book, the liquidation map ───────────
+//
+// Three panels the candles cannot answer on their own, each carrying its own
+// timeframe. They share a shape: a header with a dropdown, a body that reloads
+// by itself, and — for two of them — a canvas that repaints when the sheet
+// changes width. Nothing here is drawn with a charting library; these are a
+// few hundred lines of fillRect, which is smaller than any library that would
+// draw them and does not have to be kept in step with one.
+
+const NF_INTERVALS = ['1m', '5m', '15m', '30m', '1h', '2h', '4h', '6h'];
+const LS_PERIODS = ['5m', '15m', '30m', '1h', '4h'];
+const LQ_WINDOWS = [['12h', '12 hour'], ['24h', '24 hour'], ['3d', '3 day'], ['1w', '1 week']];
+
+function panelShell(id, what, options, current) {
+  const opts = options.map(o => {
+    const [value, label] = Array.isArray(o) ? o : [o, o];
+    return `<option value="${value}"${value === current ? ' selected' : ''}>${label}</option>`;
+  }).join('');
+  return `<div class="pnl">
+      <div class="pnlbar">
+        <span class="pnlwhat">${what}</span>
+        <select class="tfsel" id="${id}Tf">${opts}</select>
+      </div>
+      <div class="pnlbody" id="${id}Body"><div class="cwait">…</div></div>
+    </div>`;
+}
+
+// Which coin the open panels belong to, and the last payload each canvas drew.
+// A canvas holds no state of its own, so a resize has to repaint from the data.
+let panelCoin = null;
+const lastDraw = {};
+
+function loadPanels(mine, d) {
+  panelCoin = { market: d.market, symbol: d.symbol };
+  for (const [id, load] of [['nf', loadNetflow], ['ls', loadLongShort], ['lq', loadLiqMap]]) {
+    const sel = $('#' + id + 'Tf');
+    if (!sel) continue;
+    // The dropdown reloads only its own panel, and passes the live request
+    // number rather than the one this render started with — the coin has not
+    // changed, only the timeframe.
+    sel.onchange = () => load(coinReq, sel.value);
+    load(mine, sel.value);
+  }
+}
+
+// One fetch-and-swap for all three. The body is re-queried after the await
+// because opening another coin meanwhile replaces the whole report.
+async function panelLoad(id, mine, url, render) {
+  const wait = $('#' + id + 'Body');
+  if (!wait) return;
+  wait.innerHTML = '<div class="cwait">reading the tape…</div>';
+  try {
+    const d = await apiJson(url);
+    const host = $('#' + id + 'Body');
+    if (mine !== coinReq || !host) return;
+    if (d.error) throw new Error(d.error);
+    render(host, d);
+  } catch (e) {
+    const host = $('#' + id + 'Body');
+    if (mine === coinReq && host) host.innerHTML = `<div class="cnote">could not load this panel — ${e.message}</div>`;
+  }
+}
+
+const panelUrl = (panel, extra) =>
+  `/api/coin/${panel}?market=${panelCoin.market}&symbol=${encodeURIComponent(panelCoin.symbol)}&${extra}`;
+
+// ── canvas plumbing shared by both charts ──
+
+// Canvases are sized in CSS pixels and painted in device pixels, or every line
+// on a phone comes out soft.
+function fitCanvas(canvas, height) {
+  const dpr = window.devicePixelRatio || 1;
+  const w = Math.max(240, canvas.parentElement.clientWidth || 320);
+  canvas.width = Math.round(w * dpr);
+  canvas.height = Math.round(height * dpr);
+  canvas.style.width = w + 'px';
+  canvas.style.height = height + 'px';
+  const ctx = canvas.getContext('2d');
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  ctx.clearRect(0, 0, w, height);
+  return { ctx, w, h: height };
+}
+
+const themed = {};
+const col = name => themed[name] ??= getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+
+// pointermove rather than mousemove, so a finger on the chart works the same
+// as a cursor on it.
+function wireTip(canvas, describe) {
+  const tip = canvas.parentElement.querySelector('.chartip');
+  canvas.onpointermove = e => {
+    const r = canvas.getBoundingClientRect();
+    const html = describe(e.clientX - r.left, e.clientY - r.top);
+    if (!html) return tip.classList.add('hidden');
+    tip.innerHTML = html;
+    tip.classList.remove('hidden');
+    tip.style.left = Math.max(4, Math.min(r.width - tip.offsetWidth - 4, e.clientX - r.left + 14)) + 'px';
+    tip.style.top = Math.max(4, e.clientY - r.top - tip.offsetHeight - 12) + 'px';
+  };
+  canvas.onpointerleave = () => tip.classList.add('hidden');
+}
+
+const axisFont = ctx => { ctx.font = '10px ui-sans-serif,-apple-system,system-ui,sans-serif'; ctx.textBaseline = 'middle'; };
+const clockAt = ms => new Date(ms).toLocaleString([], { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' });
+const signedMoney = v => (v >= 0 ? '+' : '−') + money(Math.abs(v));
+
+// ── spot inflow / outflow ──
+
+const loadNetflow = (mine, interval) =>
+  panelLoad('nf', mine, panelUrl('netflow', `interval=${interval}`), renderNetflow);
+
+function renderNetflow(host, d) {
+  if (d.unavailable) return void (host.innerHTML = `<div class="cnote">${d.reason}</div>`);
+  const t = d.totals;
+  const where = d.venue === 'spot' ? 'spot' : 'perp';
+  host.innerHTML = `
+    <div class="chartwrap"><canvas class="chart" id="nfCanvas"></canvas><div class="chartip hidden"></div></div>
+    <div class="cgrid">
+      <div><em>net, this window</em><b class="${t.net >= 0 ? 'up' : 'down'}">${signedMoney(t.net)}</b></div>
+      <div><em>bought at market</em><b class="up">${money(t.inflow)}</b></div>
+      <div><em>sold at market</em><b class="down">${money(Math.abs(t.outflow))}</b></div>
+      <div><em>share of turnover</em><b class="${t.netSharePct >= 0 ? 'up' : 'down'}">${t.netSharePct ?? '—'}%</b></div>
+      <div><em>green / red bars</em><b>${t.greenBars} / ${t.redBars}</b></div>
+      <div><em>biggest bar</em><b class="${t.biggest.net >= 0 ? 'up' : 'down'}">${signedMoney(t.biggest.net)}</b></div>
+    </div>
+    <div class="cnote">One bar per ${d.interval} of ${where} trading: the dollars that crossed the spread to buy, minus
+      the dollars that crossed it to sell. The orange line is price on the same bars.</div>
+    <div class="cnote">Every trade has both a buyer and a seller, so this is not "more buyers than sellers" — it is which
+      side was in a hurry. And it is a residual: ${signedMoney(t.net)} net against ${money(t.turnover)} that changed hands,
+      <b>${Math.abs(t.netSharePct ?? 0)}%</b> of the flow. Read the runs of one colour, not the sign of a single bar.</div>`;
+  drawNetflow($('#nfCanvas'), d);
+}
+
+function drawNetflow(canvas, d) {
+  if (!canvas) return;
+  lastDraw.nf = { canvas, d, fn: drawNetflow };
+  const H = 190, padL = 58, padR = 62, padT = 12, padB = 20;
+  const { ctx, w } = fitCanvas(canvas, H);
+  const bars = d.bars;
+  const x0 = padL, x1 = w - padR, y0 = padT, y1 = H - padB;
+  const pw = Math.max(20, x1 - x0), ph = y1 - y0;
+
+  // Netflow is symmetric around zero, so the zero line sits in the middle and
+  // both halves share one scale — otherwise a single outlier bar decides which
+  // direction looks bigger.
+  const maxAbs = Math.max(...bars.map(b => Math.abs(b.net))) || 1;
+  const zeroY = y0 + ph / 2;
+  const netY = v => zeroY - (v / maxAbs) * (ph / 2 - 3);
+
+  const prices = bars.map(b => b.price);
+  const pLo = Math.min(...prices), pHi = Math.max(...prices);
+  const pad = (pHi - pLo) * 0.15 || pHi * 0.0015;
+  const priceY = p => y1 - ((p - (pLo - pad)) / ((pHi + pad) - (pLo - pad))) * ph;
+
+  ctx.setLineDash([3, 4]);
+  ctx.strokeStyle = col('--line');
+  ctx.lineWidth = 1;
+  axisFont(ctx);
+  ctx.fillStyle = col('--faint');
+  ctx.textAlign = 'right';
+  for (const f of [1, 0.5, 0, -0.5, -1]) {
+    const y = netY(maxAbs * f);
+    ctx.beginPath(); ctx.moveTo(x0, y); ctx.lineTo(x1, y); ctx.stroke();
+    ctx.fillText(f === 0 ? '0' : signedMoney(maxAbs * f), x0 - 7, y);
+  }
+  ctx.setLineDash([]);
+
+  const bw = pw / bars.length;
+  bars.forEach((b, i) => {
+    const y = netY(b.net);
+    ctx.fillStyle = b.net >= 0 ? col('--up') : col('--down');
+    ctx.globalAlpha = b.closed ? 0.85 : 0.4;      // the live bar is still filling
+    ctx.fillRect(x0 + i * bw, Math.min(y, zeroY), Math.max(1, bw - 0.7), Math.max(1, Math.abs(zeroY - y)));
+  });
+  ctx.globalAlpha = 1;
+
+  ctx.beginPath();
+  bars.forEach((b, i) => {
+    const x = x0 + i * bw + bw / 2, y = priceY(b.price);
+    i ? ctx.lineTo(x, y) : ctx.moveTo(x, y);
+  });
+  ctx.strokeStyle = col('--warn'); ctx.lineWidth = 1.4; ctx.stroke();
+
+  ctx.textAlign = 'left';
+  ctx.fillStyle = col('--warn');
+  ctx.fillText(fmtPx(pHi), x1 + 7, priceY(pHi));
+  ctx.fillText(fmtPx(pLo), x1 + 7, priceY(pLo));
+  ctx.fillStyle = col('--faint');
+  ctx.fillText(clockAt(bars[0].t), x0, y1 + 11);
+  ctx.textAlign = 'right';
+  ctx.fillText(clockAt(bars.at(-1).t), x1, y1 + 11);
+
+  wireTip(canvas, mx => {
+    const i = Math.floor((mx - x0) / bw);
+    if (i < 0 || i >= bars.length) return null;
+    const b = bars[i];
+    return `<b>${clockAt(b.t)}</b>
+      <div>net <b class="${b.net >= 0 ? 'up' : 'down'}">${signedMoney(b.net)}</b></div>
+      <div class="dim">bought ${money(b.buys)} · sold ${money(b.sells)}</div>
+      <div class="dim">price ${fmtPx(b.price)}</div>`;
+  });
+}
+
+// ── long / short ratio ──
+
+const loadLongShort = (mine, period) =>
+  panelLoad('ls', mine, panelUrl('longshort', `period=${period}`), renderLongShort);
+
+function renderLongShort(host, d) {
+  // Every number in this panel comes off a perpetual futures book. A spot-only
+  // pair has none, and saying that once is clearer than three empty tables and
+  // a list of exchanges that "do not list" it.
+  if (!d.taker.length && !d.accounts.length) return void (host.innerHTML =
+    `<div class="cnote">No long/short book for ${d.symbol}. These are perpetual futures numbers, and none of
+      Binance, Bybit, Bitget or Gate lists a perp under this name — a spot-only pair has no leveraged crowd to count.</div>`);
+
+  // A label under 12% has no room inside its own half of the bar.
+  const split = r => `<div class="lsbar">
+      <i class="up" style="width:${r.longPct}%">${r.longPct >= 12 ? r.longPct + '%' : ''}</i>
+      <i class="down" style="width:${r.shortPct}%">${r.shortPct >= 12 ? r.shortPct + '%' : ''}</i>
+    </div>`;
+  const dollars = r => r.longUsd == null
+    ? '<span class="lsnum dim">ratio only</span>'
+    : `<span class="lsnum">Long <b class="up">${money(r.longUsd)}</b> · Short <b class="down">${money(r.shortUsd)}</b></span>`;
+  const row = (r, opts = {}) => `<div class="lsrow${opts.cls ? ' ' + opts.cls : ''}">
+      <span class="lsvenue">${opts.name || r.venue}</span>${split(r)}${opts.usd ? dollars(r) : ''}</div>`;
+
+  // A summary row that covers one venue is that venue's row twice over, so it
+  // only earns its place when it is actually summarising something.
+  const taker = !d.taker.length ? '<div class="cnote">no venue publishes taker volume for this symbol</div>' : `
+    <div class="lstable">
+      ${d.takerAll.venueNames.length > 1 ? row(d.takerAll, { cls: 'all', name: d.takerAll.venueNames.join(' + '), usd: true }) : ''}
+      ${d.taker.map(r => row(r, { usd: true })).join('')}
+    </div>
+    <div class="cnote">Only Binance publishes these in dollars — a venue marked "ratio only" is telling you its split
+      without its size, so a lopsided small book cannot be weighed against a balanced large one here.</div>`;
+
+  const accounts = !d.accounts.length ? '<div class="cnote">no venue publishes an account book for this symbol</div>' : `
+    <div class="lstable">
+      ${row(d.accountsAll, { cls: 'all', name: `all ${d.accountsAll.venues} venues` })}
+      ${d.accounts.map(r => row(r)).join('')}
+      ${d.top ? row(d.top, { cls: 'top', name: 'Top traders' }) : ''}
+    </div>`;
+
+  host.innerHTML = `
+    <div class="lshead">Who is paying the spread <span class="dim">taker buy vs sell volume, last ${d.period}</span></div>
+    ${taker}
+    <div class="lshead">Who is positioned <span class="dim">share of accounts long vs short</span></div>
+    ${accounts}
+    ${d.read.length ? `<div class="clist">${d.read.map(x => `<div>· ${x}</div>`).join('')}</div>` : ''}
+    ${d.venuesMissing.length ? `<div class="cnote">No perp on ${d.venuesMissing.join(', ')} — those rows are missing, not zero.</div>` : ''}
+    <div class="cnote">These two measure different things and often disagree. Taker volume is flow: who crossed the spread
+      in the last ${d.period}. Accounts are a headcount: how many are sitting on each side, whatever their size. Retail runs
+      net long almost permanently, so 70% long accounts is not a signal — the crowd leaning one way <em>while the flow
+      goes the other</em> is.</div>`;
+}
+
+// ── liquidation heatmap ──
+
+const loadLiqMap = (mine, win) =>
+  panelLoad('lq', mine, panelUrl('liqmap', `window=${win}`), renderLiqMap);
+
+// Dark blue through teal and green to yellow: the same ordering every heatmap
+// uses, so bright always means more without anyone having to read a key.
+const HEAT = [[0, 29, 43, 87], [0.35, 31, 111, 139], [0.6, 47, 163, 107], [0.8, 143, 206, 74], [1, 255, 228, 94]];
+function heatColor(v, out) {
+  let a = HEAT[0], b = HEAT[HEAT.length - 1];
+  for (let i = 0; i < HEAT.length - 1; i++) if (v >= HEAT[i][0] && v <= HEAT[i + 1][0]) { a = HEAT[i]; b = HEAT[i + 1]; break; }
+  const f = b[0] === a[0] ? 0 : (v - a[0]) / (b[0] - a[0]);
+  for (let i = 0; i < 3; i++) out[i] = Math.round(a[i + 1] + (b[i + 1] - a[i + 1]) * f);
+  out[3] = Math.round((0.3 + 0.7 * v) * 255);
+  return out;
+}
+
+function renderLiqMap(host, d) {
+  if (d.unavailable) return void (host.innerHTML = `<div class="cnote">${d.reason}</div>`);
+
+  const shelves = !d.shelves.length ? '<div class="cnote">no cluster stands out in this window</div>' : `
+    <div class="ctable">${d.shelves.map(s => `
+      <div class="crow">
+        <span class="${s.side === 'above' ? 'down' : 'up'}">${fmtPx(s.price)}</span>
+        <span class="dim">${s.distPct >= 0 ? '+' : ''}${s.distPct}%</span>
+        <span class="lqmag"><i style="width:${s.intensity}%"></i>${money(s.usd)}</span>
+      </div>`).join('')}</div>`;
+
+  const a = d.actual;
+  host.innerHTML = `
+    <div class="chartwrap"><canvas class="chart" id="lqCanvas"></canvas><div class="chartip hidden"></div></div>
+    <div class="heatkey"><span>less leverage</span><i></i><span>more</span></div>
+    ${d.venue === 'spot' ? `<div class="cnote warnnote">There is no perpetual for ${d.symbol}, so this is modelled on spot
+      candles. Spot has no liquidations — read the bands as where leverage would sit if this traded as a perp, and weigh
+      them accordingly.</div>` : ''}
+    <div class="cnote">Each band is a price where leveraged positions opened over this ${d.windowLabel} window would be
+      force-closed. Bands stop when price trades through them — those positions are already gone — so what is left on screen is
+      leverage nobody has taken out yet. ${money(d.clearedUsd)} of it was cleared during this window.</div>
+
+    <h5>Untouched clusters, nearest first</h5>
+    ${shelves}
+    <div class="cnote">Price tends to travel toward these, because a forced close is a market order somebody else gets to
+      trade against. That is a tendency, not a target — a shelf can sit there for days.</div>
+
+    ${a ? `<h5>What actually blew up, last ${a.hours}h</h5>
+    <div class="cgrid">
+      <div><em>longs liquidated</em><b class="down">${money(a.longUsd)}</b></div>
+      <div><em>shorts liquidated</em><b class="up">${money(a.shortUsd)}</b></div>
+      <div><em>venue</em><b>${a.venue}</b></div>
+    </div>
+    <div class="cnote">Those two are measured, not modelled — Gate is the one exchange that publishes what its own book
+      force-closed. It is a single venue, so read it as a floor for the market, not a total.</div>` : ''}
+
+    <div class="cnote warnnote">The heatmap itself is a model. No exchange publishes where open positions liquidate — that
+      lives inside their risk engine — so this one does what every liquidation heatmap does: it treats the volume traded at
+      each price as positions opened there, splits it across the leverage people actually use (10× to 100×), and marks where
+      each slice would be closed out. Real underneath it are only the candles. A bright band means "a lot of leverage
+      probably sits here", never a fact about anyone's position.</div>`;
+  drawHeatmap($('#lqCanvas'), d);
+}
+
+function drawHeatmap(canvas, d) {
+  if (!canvas) return;
+  lastDraw.lq = { canvas, d, fn: drawHeatmap };
+  const H = 262, padL = 6, padR = 64, padT = 8, padB = 20;
+  const { ctx, w } = fitCanvas(canvas, H);
+  const x0 = padL, x1 = w - padR, y0 = padT, y1 = H - padB;
+  const pw = x1 - x0, ph = y1 - y0;
+  const n = d.cols.length, nb = d.buckets;
+  const cw = pw / n;
+  const yOf = p => y1 - ((p - d.lo) / (d.hi - d.lo)) * ph;
+
+  ctx.fillStyle = '#0d1120';
+  ctx.fillRect(x0, y0, pw, ph);
+
+  // The grid is painted one cell per pixel and then blown up to fit, rather
+  // than as fifteen thousand fillRects. Cells land on fractions of a pixel at
+  // this size, and a rect that starts at x.4 leaves a seam behind it — the
+  // whole map ends up under a faint mesh. Nearest-neighbour scaling has no
+  // seams to leave, and keeps the bands as sharp as they really are.
+  const off = document.createElement('canvas');
+  off.width = n; off.height = nb;
+  const octx = off.getContext('2d');
+  const img = octx.createImageData(n, nb);
+  const rgba = [0, 0, 0, 0];
+  for (let t = 0; t < n; t++) {
+    const colv = d.cols[t];
+    for (let b = 0; b < nb; b++) {
+      const v = colv[b];
+      if (v < 2) continue;                        // below this it is invisible anyway
+      heatColor(v / 100, rgba);
+      const i = ((nb - 1 - b) * n + t) * 4;       // row 0 of the bitmap is the top price
+      img.data[i] = rgba[0]; img.data[i + 1] = rgba[1]; img.data[i + 2] = rgba[2]; img.data[i + 3] = rgba[3];
+    }
+  }
+  octx.putImageData(img, 0, 0);
+  ctx.imageSmoothingEnabled = false;
+  ctx.drawImage(off, x0, y0, pw, ph);
+
+  const bodyW = Math.max(1, Math.min(6, cw * 0.62));
+  for (let i = 0; i < d.candles.length; i++) {
+    const c = d.candles[i], x = x0 + i * cw + cw / 2;
+    ctx.strokeStyle = ctx.fillStyle = c.c >= c.o ? 'rgba(190,255,220,.92)' : 'rgba(255,175,190,.92)';
+    ctx.lineWidth = 1;
+    ctx.beginPath(); ctx.moveTo(x, yOf(c.h)); ctx.lineTo(x, yOf(c.l)); ctx.stroke();
+    const yo = yOf(c.o), yc = yOf(c.c);
+    ctx.fillRect(x - bodyW / 2, Math.min(yo, yc), bodyW, Math.max(1, Math.abs(yc - yo)));
+  }
+
+  // Price now, as a line across the whole window — every distance in the table
+  // below is measured from it.
+  ctx.setLineDash([4, 3]);
+  ctx.strokeStyle = col('--fg');
+  ctx.globalAlpha = 0.32;
+  ctx.beginPath(); ctx.moveTo(x0, yOf(d.price)); ctx.lineTo(x1, yOf(d.price)); ctx.stroke();
+  ctx.globalAlpha = 1;
+  ctx.setLineDash([]);
+
+  axisFont(ctx);
+  ctx.textAlign = 'left';
+  // The live price is the label that matters, so a scale tick close enough to
+  // print on top of it loses its place rather than the other way round.
+  const priceRowY = yOf(d.price);
+  ctx.fillStyle = col('--faint');
+  for (let i = 0; i <= 5; i++) {
+    const p = d.lo + (d.hi - d.lo) * (i / 5), y = yOf(p);
+    if (Math.abs(y - priceRowY) < 11) continue;
+    ctx.fillText(fmtPx(p), x1 + 6, y);
+  }
+  ctx.fillStyle = col('--fg');
+  ctx.fillText(fmtPx(d.price), x1 + 6, priceRowY);
+  ctx.fillStyle = col('--faint');
+  ctx.fillText(clockAt(d.times[0]), x0, y1 + 11);
+  ctx.textAlign = 'right';
+  ctx.fillText(clockAt(d.times.at(-1)), x1, y1 + 11);
+
+  wireTip(canvas, (mx, my) => {
+    if (mx < x0 || mx > x1 || my < y0 || my > y1) return null;
+    const t = Math.min(n - 1, Math.max(0, Math.floor((mx - x0) / cw)));
+    const b = Math.min(nb - 1, Math.max(0, Math.floor(((y1 - my) / ph) * nb)));
+    const v = d.cols[t][b], p = d.prices[b];
+    return `<b>${fmtPx(p)}</b> <span class="dim">${((p - d.price) / d.price * 100).toFixed(2)}% away</span>
+      <div class="dim">${clockAt(d.times[t])}</div>
+      <div>${v ? `${v}% of the window's biggest cluster` : 'nothing left here'}</div>
+      ${v ? `<div class="dim">${money(v / 100 * d.peakUsd)} modelled</div>` : ''}`;
+  });
+}
+
+// A canvas keeps no state, so rotating the phone or resizing the window has to
+// repaint both charts from the payload they last drew.
+let panelResize;
+addEventListener('resize', () => {
+  clearTimeout(panelResize);
+  panelResize = setTimeout(() => {
+    for (const key of Object.keys(lastDraw)) {
+      const e = lastDraw[key];
+      if (e?.canvas.isConnected) e.fn(e.canvas, e.d);
+    }
+  }, 160);
+});
 
 $('#coinClose').onclick = () => { coinReq++; $('#coinModal').classList.add('hidden'); };
 $('#coinModal').onclick = e => { if (e.target.id === 'coinModal') { coinReq++; $('#coinModal').classList.add('hidden'); } };

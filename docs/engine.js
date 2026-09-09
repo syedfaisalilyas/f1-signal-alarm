@@ -19,6 +19,7 @@ import { VolatilityScanner } from './src/volatility.js';
 import { Screener } from './src/screener.js';
 import { IgnitionScanner } from './src/ignition.js';
 import { coinReport } from './src/coinreport.js';
+import { netflow, longShort, liquidationMap, NETFLOW_INTERVALS, LS_PERIODS, LIQ_WINDOWS } from './src/marketflow.js';
 import { hotSweep, hotMessage, HOT_DEFAULTS } from './src/hotwatch.js';
 import { hydrate as hydrateLeverage, setOverrides } from './src/leverage.js';
 import { buildMessage } from './src/notify.js';
@@ -389,6 +390,28 @@ async function route(path, params, method, body) {
       instrument: inst.id, label: inst.label, proxied: inst.proxied, note: inst.note, unit: inst.unit
     });
     return json(report);
+  }
+
+  // The three timeframe panels under the report. Same modules the server
+  // calls; the only reason they are separate routes is that changing one
+  // panel's timeframe should not rebuild the whole report behind it.
+  if (path.startsWith('/api/coin/')) {
+    const symbol = (params.get('symbol') || '').trim().toUpperCase();
+    if (symbol.length < 3 || symbol.length > 24 || /[\s/?&#]/.test(symbol)) return json({ error: 'symbol required' }, 400);
+    const market = params.get('market') === 'spot' ? 'spot' : 'futures';
+    const panel = path.slice('/api/coin/'.length);
+    if (panel === 'netflow') {
+      const interval = NETFLOW_INTERVALS.includes(params.get('interval')) ? params.get('interval') : '5m';
+      return json(await netflow({ market, symbol, interval }));
+    }
+    if (panel === 'longshort') {
+      const period = LS_PERIODS.includes(params.get('period')) ? params.get('period') : '1h';
+      return json(await longShort({ symbol, period }));
+    }
+    if (panel === 'liqmap') {
+      const window = LIQ_WINDOWS[params.get('window')] ? params.get('window') : '12h';
+      return json(await liquidationMap({ symbol, window }));
+    }
   }
 
   if (path === '/api/news') {
