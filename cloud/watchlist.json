@@ -1,76 +1,49 @@
 {
   "watches": [
     {
-      "id": "futures:BULLAUSDT:3m",
+      "id": "futures:XAUTUSDT:3m",
       "enabled": true,
       "cfg": {},
-      "addedAt": 1788854208145,
+      "addedAt": 1788938428131,
       "market": "futures",
-      "symbol": "BULLAUSDT",
+      "symbol": "XAUTUSDT",
       "interval": "3m"
     },
     {
-      "id": "futures:MARSCOINUSDT:3m",
+      "id": "futures:PAXGUSDT:1m",
       "enabled": true,
       "cfg": {},
-      "addedAt": 1788854208145,
+      "addedAt": 1788938428131,
       "market": "futures",
-      "symbol": "MARSCOINUSDT",
+      "symbol": "PAXGUSDT",
+      "interval": "1m"
+    },
+    {
+      "id": "futures:PAXGUSDT:3m",
+      "enabled": true,
+      "cfg": {},
+      "addedAt": 1788938428131,
+      "market": "futures",
+      "symbol": "PAXGUSDT",
       "interval": "3m"
     },
     {
-      "id": "futures:4USDT:3m",
+      "id": "futures:PAXGUSDT:5m",
       "enabled": true,
       "cfg": {},
-      "addedAt": 1788854208145,
+      "addedAt": 1788938428131,
       "market": "futures",
-      "symbol": "4USDT",
-      "interval": "3m"
-    },
-    {
-      "id": "futures:BTCUSDT:5m",
-      "enabled": true,
-      "cfg": {},
-      "addedAt": 1788854208145,
-      "market": "futures",
-      "symbol": "BTCUSDT",
+      "symbol": "PAXGUSDT",
       "interval": "5m"
     },
     {
-      "id": "futures:COLLECTUSDT:3m",
+      "id": "futures:PAXGUSDT:1h",
       "enabled": true,
       "cfg": {},
-      "addedAt": 1788854208145,
+      "addedAt": 1788938428131,
       "market": "futures",
-      "symbol": "COLLECTUSDT",
-      "interval": "3m"
-    },
-    {
-      "id": "futures:WOOUSDT:3m",
-      "enabled": true,
-      "cfg": {},
-      "addedAt": 1788854208145,
-      "market": "futures",
-      "symbol": "WOOUSDT",
-      "interval": "3m"
-    },
-    {
-      "id": "futures:SOPHUSDT:3m",
-      "enabled": true,
-      "cfg": {},
-      "addedAt": 1788854208145,
-      "market": "futures",
-      "symbol": "SOPHUSDT",
-      "interval": "3m"
-    },
-    {
-      "id": "futures:FORMUSDT:3m",
-      "enabled": true,
-      "cfg": {},
-      "addedAt": 1788854208145,
-      "market": "futures",
-      "symbol": "FORMUSDT",
-      "interval": "3m"
+      "symbol": "PAXGUSDT",
+      "interval": "1h"
     }
   ],
   "settings": {
