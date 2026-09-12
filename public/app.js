@@ -1434,7 +1434,9 @@ function renderCoin(d) {
 
 const NF_INTERVALS = ['1m', '5m', '15m', '30m', '1h', '2h', '4h', '6h'];
 const LS_PERIODS = ['5m', '15m', '30m', '1h', '4h'];
-const LQ_WINDOWS = [['12h', '12 hour'], ['24h', '24 hour'], ['3d', '3 day'], ['1w', '1 week']];
+const LQ_WINDOWS = [['5m', '5 minute'], ['15m', '15 minute'], ['30m', '30 minute'], ['1h', '1 hour'], ['2h', '2 hour'],
+  ['4h', '4 hour'], ['6h', '6 hour'], ['12h', '12 hour'], ['24h', '24 hour'], ['3d', '3 day'], ['1w', '1 week'],
+  ['2w', '2 week'], ['1M', '1 month']];
 
 function panelShell(id, what, options, current) {
   const opts = options.map(o => {

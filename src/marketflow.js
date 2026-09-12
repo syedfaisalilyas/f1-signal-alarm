@@ -269,11 +269,26 @@ function reading(takerAll, accountsAll, top) {
 // It is still a model. Treat a bright band as "a lot of stops probably live
 // here", never as a fact about anyone's book.
 
+// Every window uses a candle both Binance and MEXC serve natively, so the map
+// comes off the perp wherever the process is running — a window built on an
+// interval only one venue has would silently fall through to spot in the other
+// region and be labelled as if the coin had no perp. The short ones are thin
+// by nature: five one-minute bars is five columns, and the bands it shows are
+// only the leverage taken on in those five minutes.
 export const LIQ_WINDOWS = {
+  '5m': { interval: '1m', limit: 5, label: '5 minute' },
+  '15m': { interval: '1m', limit: 15, label: '15 minute' },
+  '30m': { interval: '1m', limit: 30, label: '30 minute' },
+  '1h': { interval: '1m', limit: 60, label: '1 hour' },
+  '2h': { interval: '1m', limit: 120, label: '2 hour' },
+  '4h': { interval: '1m', limit: 240, label: '4 hour' },
+  '6h': { interval: '5m', limit: 72, label: '6 hour' },
   '12h': { interval: '5m', limit: 144, label: '12 hour' },
   '24h': { interval: '15m', limit: 96, label: '24 hour' },
   '3d': { interval: '30m', limit: 144, label: '3 day' },
-  '1w': { interval: '2h', limit: 84, label: '1 week' }
+  '1w': { interval: '1h', limit: 168, label: '1 week' },
+  '2w': { interval: '4h', limit: 84, label: '2 week' },
+  '1M': { interval: '4h', limit: 180, label: '1 month' }
 };
 
 // The leverage retail actually runs, and roughly how it splits. These weights
@@ -297,7 +312,10 @@ export async function liquidationMap({ symbol, window = '12h' }) {
   try { raw = await fetchCandles('futures', symbol, w.interval, w.limit); }
   catch { raw = await fetchCandles('spot', symbol, w.interval, w.limit); venue = 'spot'; }
   const bars = raw.slice(-w.limit);
-  if (bars.length < 12) return { unavailable: true, window, reason: 'not enough candles in this window' };
+  // A window is unusable when the feed handed back well under what it asked
+  // for — twelve bars for the long ones, most of the window for the short.
+  if (bars.length < Math.min(12, Math.ceil(w.limit * 0.6)))
+    return { unavailable: true, window, reason: 'not enough candles in this window' };
 
   // The grid has to reach past the candles far enough to hold the bands, and
   // no further: give it the full ±10% a 10× position implies and a quiet BTC
