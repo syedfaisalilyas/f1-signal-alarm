@@ -49,7 +49,7 @@ async function jget(url, ms = 9000) {
 // Binance gives the taker buy side of each candle directly, so netflow is
 // exact arithmetic, not an estimate: buys − sells = 2 × takerBuy − total.
 
-export const NETFLOW_INTERVALS = ['1m', '5m', '15m', '30m', '1h', '2h', '4h', '6h'];
+export const NETFLOW_INTERVALS = ['1m', '3m', '5m', '15m', '30m', '1h', '2h', '4h', '6h'];
 
 export async function netflow({ market, symbol, interval = '5m', limit = 240 }) {
   if (!NETFLOW_INTERVALS.includes(interval)) interval = '5m';
@@ -122,15 +122,20 @@ export async function netflow({ market, symbol, interval = '5m', limit = 240 }) 
 // is not news. What is news is that number moving, or the two disagreeing:
 // accounts piled long while takers sell is distribution into a hopeful crowd.
 
-export const LS_PERIODS = ['5m', '15m', '30m', '1h', '4h'];
+export const LS_PERIODS = ['1m', '3m', '5m', '15m', '30m', '1h', '4h'];
 
-// Every venue spells the same five windows differently.
+// Every venue spells the same windows differently, and only Gate buckets its
+// book below five minutes — Binance, Bybit and Bitget aggregate these stats no
+// finer than five, and asking them for one returns an empty array or a
+// parameter error. A venue with no spelling for a window is not asked for it.
 const PERIOD = {
   binance: { '5m': '5m', '15m': '15m', '30m': '30m', '1h': '1h', '4h': '4h' },
   bybit: { '5m': '5min', '15m': '15min', '30m': '30min', '1h': '1h', '4h': '4h' },
   bitget: { '5m': '5m', '15m': '15m', '30m': '30m', '1h': '1h', '4h': '4h' },
-  gate: { '5m': '5m', '15m': '15m', '30m': '30m', '1h': '1h', '4h': '4h' }
+  gate: { '1m': '1m', '3m': '3m', '5m': '5m', '15m': '15m', '30m': '30m', '1h': '1h', '4h': '4h' }
 };
+
+const VENUES = ['Binance', 'Bybit', 'Bitget', 'Gate'];
 
 const pctPair = (longPart, shortPart) => {
   const t = longPart + shortPart;
@@ -142,17 +147,25 @@ export async function longShort({ symbol, period = '1h' }) {
   if (!LS_PERIODS.includes(period)) period = '1h';
   const perp = symbol.toUpperCase();
   const gate = gateContract(perp);
+  const bnP = PERIOD.binance[period], byP = PERIOD.bybit[period];
+  const bgP = PERIOD.bitget[period], gaP = PERIOD.gate[period];
 
   // Binance reports taker volume in coin units, so the dollar column needs a
   // price. Without it the panel still works — it just loses the $ figures.
-  const [price, bnTaker, bnGlobal, bnTop, bybit, bitget, gateStat] = await Promise.all([
+  //
+  // The last call replaces the Binance taker stat on windows Binance does not
+  // aggregate. That stat is taker buy volume against total volume, and both
+  // numbers are already in the candle — so the same measurement, off the same
+  // perp, survives a window its own endpoint refuses to serve.
+  const [price, bnTaker, bnGlobal, bnTop, bybit, bitget, gateStat, bnKline] = await Promise.all([
     jget(`${FAPI}/ticker/price?symbol=${perp}`).then(d => +d.price).catch(() => null),
-    jget(`${FDATA}/takerlongshortRatio?symbol=${perp}&period=${PERIOD.binance[period]}&limit=1`).catch(() => null),
-    jget(`${FDATA}/globalLongShortAccountRatio?symbol=${perp}&period=${PERIOD.binance[period]}&limit=1`).catch(() => null),
-    jget(`${FDATA}/topLongShortAccountRatio?symbol=${perp}&period=${PERIOD.binance[period]}&limit=1`).catch(() => null),
-    jget(`https://api.bybit.com/v5/market/account-ratio?category=linear&symbol=${perp}&period=${PERIOD.bybit[period]}&limit=1`).catch(() => null),
-    jget(`https://api.bitget.com/api/v2/mix/market/account-long-short?symbol=${perp}&period=${PERIOD.bitget[period]}&productType=usdt-futures`).catch(() => null),
-    jget(`https://api.gateio.ws/api/v4/futures/usdt/contract_stats?contract=${gate}&interval=${PERIOD.gate[period]}&limit=2`).catch(() => null)
+    bnP ? jget(`${FDATA}/takerlongshortRatio?symbol=${perp}&period=${bnP}&limit=1`).catch(() => null) : null,
+    bnP ? jget(`${FDATA}/globalLongShortAccountRatio?symbol=${perp}&period=${bnP}&limit=1`).catch(() => null) : null,
+    bnP ? jget(`${FDATA}/topLongShortAccountRatio?symbol=${perp}&period=${bnP}&limit=1`).catch(() => null) : null,
+    byP ? jget(`https://api.bybit.com/v5/market/account-ratio?category=linear&symbol=${perp}&period=${byP}&limit=1`).catch(() => null) : null,
+    bgP ? jget(`https://api.bitget.com/api/v2/mix/market/account-long-short?symbol=${perp}&period=${bgP}&productType=usdt-futures`).catch(() => null) : null,
+    gaP ? jget(`https://api.gateio.ws/api/v4/futures/usdt/contract_stats?contract=${gate}&interval=${gaP}&limit=2`).catch(() => null) : null,
+    bnP ? null : jget(`${FAPI}/klines?symbol=${perp}&interval=${period}&limit=3`).catch(() => null)
   ]);
 
   // Gate stamps the current bucket before any trade lands in it, so the newest
@@ -170,6 +183,16 @@ export async function longShort({ symbol, period = '1h' }) {
       venue: 'Binance', ...p,
       longUsd: price ? buy * price : null, shortUsd: price ? sell * price : null
     });
+  } else if (Array.isArray(bnKline)) {
+    // Quote volume and taker-buy quote volume, both already in dollars — no
+    // price lookup needed, so this row keeps its $ column. The forming bar is
+    // skipped: a minute two seconds old is often one trade, and one trade is
+    // 100% of something.
+    const k = [...bnKline].reverse().find(r => +r[6] < Date.now() && +r[7] > 0);
+    if (k) {
+      const buy = +k[10], sell = +k[7] - +k[10], p = pctPair(buy, sell);
+      if (p) taker.push({ venue: 'Binance', ...p, longUsd: buy, shortUsd: sell });
+    }
   }
   if (gateRow?.lsr_taker > 0) {
     const p = fromRatio(gateRow.lsr_taker);
@@ -190,9 +213,15 @@ export async function longShort({ symbol, period = '1h' }) {
   }
 
   // The top-trader book is the one worth reading against the crowd: same
-  // exchange, same window, but only accounts holding real size.
+  // exchange, same window, but only accounts holding real size. Gate counts
+  // its own big accounts at every window it serves, including the minute
+  // Binance will not, so the read against the crowd survives down there too.
   const tp = Array.isArray(bnTop) ? bnTop.at(-1) : null;
-  const top = tp ? { venue: 'Binance top traders', longPct: r2(+tp.longAccount * 100), shortPct: r2(+tp.shortAccount * 100) } : null;
+  const top = tp
+    ? { venue: 'Binance top traders', longPct: r2(+tp.longAccount * 100), shortPct: r2(+tp.shortAccount * 100) }
+    : gateRow && (gateRow.top_long_account > 0 || gateRow.top_short_account > 0)
+      ? { venue: 'Gate top traders', ...pctPair(gateRow.top_long_account, gateRow.top_short_account) }
+      : null;
 
   const avg = rows => rows.length
     ? { longPct: r2(sum(rows.map(r => r.longPct)) / rows.length), shortPct: r2(sum(rows.map(r => r.shortPct)) / rows.length) }
@@ -213,13 +242,29 @@ export async function longShort({ symbol, period = '1h' }) {
     ? { ...avg(accounts), venues: accounts.length, venueNames: accounts.map(r => r.venue) }
     : null;
 
+  // A venue absent because it does not publish this window is not a venue with
+  // no perp, and "no perp on Bybit" would be a lie at 1m — so the two reasons
+  // for an empty row are reported apart. Binance is always asked: the stat
+  // endpoint where it has one, the candle where it does not.
+  const served = { Binance: true, Bybit: !!byP, Bitget: !!bgP, Gate: !!gaP };
+  const noWindow = VENUES.filter(v => !served[v]);
+  const bnFromCandle = !bnP && taker.some(r => r.venue === 'Binance');
+
   return {
     symbol: perp, period, at: Date.now(), price,
     taker, takerAll, accounts, accountsAll, top,
     lean: longShortLean(takerAll, accountsAll),
     read: reading(takerAll, accountsAll, top),
-    venuesMissing: ['Binance', 'Bybit', 'Bitget', 'Gate']
-      .filter(v => !taker.some(r => r.venue === v) && !accounts.some(r => r.venue === v))
+    venuesMissing: VENUES.filter(v => served[v]
+      && !taker.some(r => r.venue === v) && !accounts.some(r => r.venue === v)),
+    venuesNoWindow: noWindow,
+    periodNote: noWindow.length
+      ? `Only Gate publishes an account book this fine, so the crowd half of this panel is Gate's alone at ${period}.` +
+        (bnFromCandle
+          ? ` The Binance row above it is taker volume read straight off the ${period} perp candle — the same split its` +
+            ` own stat reports, one window finer. That stat, and the ${noWindow.join(' and ')} books, start at 5m.`
+          : ` The Binance stat, like the ${noWindow.join(' and ')} books, starts at 5m.`)
+      : null
   };
 }
 
@@ -274,8 +319,12 @@ function reading(takerAll, accountsAll, top) {
 // interval only one venue has would silently fall through to spot in the other
 // region and be labelled as if the coin had no perp. The short ones are thin
 // by nature: five one-minute bars is five columns, and the bands it shows are
-// only the leverage taken on in those five minutes.
+// only the leverage taken on in those five minutes. One minute is the floor —
+// no venue serves a perp candle finer, so that window is a single column, the
+// shelves the minute now filling would leave behind.
 export const LIQ_WINDOWS = {
+  '1m': { interval: '1m', limit: 1, label: '1 minute' },
+  '3m': { interval: '1m', limit: 3, label: '3 minute' },
   '5m': { interval: '1m', limit: 5, label: '5 minute' },
   '15m': { interval: '1m', limit: 15, label: '15 minute' },
   '30m': { interval: '1m', limit: 30, label: '30 minute' },
@@ -362,7 +411,14 @@ export async function liquidationMap({ symbol, window = '12h' }) {
     grid.push(Float64Array.from(openL, (v, i) => v + openS[i]));
   }
 
+  // Nothing traded in the window. The long ones cannot reach this, but a quiet
+  // coin's current minute can, and a blank map with no explanation reads as a
+  // broken panel rather than an empty one.
   const peak = Math.max(...grid.map(col => Math.max(...col)));
+  if (!(peak > 0)) return {
+    unavailable: true, window,
+    reason: `nothing has traded in this ${w.label} window yet — there is no leverage to place`
+  };
   // Sent as 0–100 per cell. A byte of precision is more than a screen can
   // paint, and the alternative is a megabyte of float JSON per coin.
   const cols = grid.map(col => Array.from(col, v => peak > 0 ? Math.round(v / peak * 100) : 0));

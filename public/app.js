@@ -1432,9 +1432,9 @@ function renderCoin(d) {
 // few hundred lines of fillRect, which is smaller than any library that would
 // draw them and does not have to be kept in step with one.
 
-const NF_INTERVALS = ['1m', '5m', '15m', '30m', '1h', '2h', '4h', '6h'];
-const LS_PERIODS = ['5m', '15m', '30m', '1h', '4h'];
-const LQ_WINDOWS = [['5m', '5 minute'], ['15m', '15 minute'], ['30m', '30 minute'], ['1h', '1 hour'], ['2h', '2 hour'],
+const NF_INTERVALS = ['1m', '3m', '5m', '15m', '30m', '1h', '2h', '4h', '6h'];
+const LS_PERIODS = ['1m', '3m', '5m', '15m', '30m', '1h', '4h'];
+const LQ_WINDOWS = [['1m', '1 minute'], ['3m', '3 minute'], ['5m', '5 minute'], ['15m', '15 minute'], ['30m', '30 minute'], ['1h', '1 hour'], ['2h', '2 hour'],
   ['4h', '4 hour'], ['6h', '6 hour'], ['12h', '12 hour'], ['24h', '24 hour'], ['3d', '3 day'], ['1w', '1 week'],
   ['2w', '2 week'], ['1M', '1 month']];
 
@@ -1676,9 +1676,9 @@ function renderLongShort(host, d) {
 
   const accounts = !d.accounts.length ? '<div class="cnote">no venue publishes an account book for this symbol</div>' : `
     <div class="lstable">
-      ${row(d.accountsAll, { cls: 'all', name: `all ${d.accountsAll.venues} venues` })}
+      ${d.accountsAll.venues > 1 ? row(d.accountsAll, { cls: 'all', name: `all ${d.accountsAll.venues} venues` }) : ''}
       ${d.accounts.map(r => row(r)).join('')}
-      ${d.top ? row(d.top, { cls: 'top', name: 'Top traders' }) : ''}
+      ${d.top ? row(d.top, { cls: 'top', name: d.top.venue }) : ''}
     </div>`;
 
   host.innerHTML = `
@@ -1689,6 +1689,7 @@ function renderLongShort(host, d) {
     ${accounts}
     ${d.read.length ? `<div class="clist">${d.read.map(x => `<div>· ${x}</div>`).join('')}</div>` : ''}
     ${d.venuesMissing.length ? `<div class="cnote">No perp on ${d.venuesMissing.join(', ')} — those rows are missing, not zero.</div>` : ''}
+    ${d.periodNote ? `<div class="cnote">${d.periodNote}</div>` : ''}
     <div class="cnote">These two measure different things and often disagree. Taker volume is flow: who crossed the spread
       in the last ${d.period}. Accounts are a headcount: how many are sitting on each side, whatever their size. Retail runs
       net long almost permanently, so 70% long accounts is not a signal — the crowd leaning one way <em>while the flow
@@ -1734,7 +1735,7 @@ function renderLiqMap(host, d) {
       them accordingly.</div>` : ''}
     <div class="cnote">Each band is a price where leveraged positions opened over this ${d.windowLabel} window would be
       force-closed. Bands stop when price trades through them — those positions are already gone — so what is left on screen is
-      leverage nobody has taken out yet. ${money(d.clearedUsd)} of it was cleared during this window.</div>
+      leverage nobody has taken out yet.${d.clearedUsd > 0 ? ` ${money(d.clearedUsd)} of it was cleared during this window.` : ''}</div>
 
     <h5>Untouched clusters, nearest first</h5>
     ${shelves}
@@ -1830,8 +1831,12 @@ function drawHeatmap(canvas, d) {
   ctx.fillText(fmtPx(d.price), x1 + 6, priceRowY);
   ctx.fillStyle = col('--faint');
   ctx.fillText(clockAt(d.times[0]), x0, y1 + 11);
-  ctx.textAlign = 'right';
-  ctx.fillText(clockAt(d.times.at(-1)), x1, y1 + 11);
+  // The 1-minute window is a single column: it opens and closes in the same
+  // minute, and printing that minute at both ends of the axis reads as a fault.
+  if (n > 1) {
+    ctx.textAlign = 'right';
+    ctx.fillText(clockAt(d.times.at(-1)), x1, y1 + 11);
+  }
 
   wireTip(canvas, (mx, my) => {
     if (mx < x0 || mx > x1 || my < y0 || my > y1) return null;
