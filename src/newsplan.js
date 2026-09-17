@@ -259,7 +259,8 @@ export function backtest({ events, bars, instrument, symbol, windowMin = 30 }) {
     // — which is how a scorecard fills with defeats nobody would have suffered.
     if (plan.verdict !== 'take') {
       out.push({ at: e.at, title: e.title, currency: e.currency, impact: e.impact,
-        outcome: 'skipped', note: plan.verdictWhy, direction: null, rMultiple: null, skipped: true });
+        outcome: 'skipped', note: plan.verdictWhy, direction: null, rMultiple: null, skipped: true,
+        usualMovePct: plan.expectedMovePct, preRangePct: plan.preRange.widthPct });
       continue;
     }
 

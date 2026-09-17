@@ -1177,13 +1177,99 @@ function renderNews(n) {
       because what takes you out on a release is the whipsaw through the other side, not a clean move against you.
       Expected move is ${n.plan.basis}.</div>`;
 
-  // ── how the rule actually did ──
+  // ── what past releases did: the number, and which way it sent the price ──
+  const nm = n.instrument === 'gold' ? 'gold' : name;
+  const fmtVal = (v, r) => v == null ? '—'
+    : r.unit === '%' ? `${v}%`
+    : /^[A-Z]{2,}$/.test(r.unit) ? `${v}${r.scale} ${r.unit}`
+    : `${r.unit}${v}${r.scale}`;
+  const moved = r => r.went === 'flat' ? 'barely moved'
+    : `${r.went === 'up' ? 'rose' : 'fell'} ${Math.abs(r.move.movePct).toFixed(2)}%`;
+  const push = d => d === 'up' ? 'rise' : 'fall';
+
+  const pastRow = r => {
+    const mv = r.move;
+    const talks = r.releases.filter(x => x.talk);
+    const rels = r.releases.filter(x => !x.talk).map(x => {
+      const res = x.result;
+      const num = res
+        ? `came in <b>${fmtVal(res.actual, res)}</b>` +
+          (res.forecast != null ? `, expected <b>${fmtVal(res.forecast, res)}</b>` : ' <span class="dim">(no forecast given)</span>') +
+          (res.previous != null ? ` <span class="dim">· last time ${fmtVal(res.previous, res)}</span>` : '')
+        : '<span class="dim">no published number</span>';
+      const tag = x.surprise === 'above' ? '<span class="sur">▲ HIGHER than expected</span>'
+        : x.surprise === 'below' ? '<span class="sur">▼ LOWER than expected</span>'
+        : x.surprise === 'inline' ? '<span class="sur same">= AS EXPECTED</span>' : '';
+      return `<div class="prrel"><span class="prname">${x.currency} ${x.title}</span> ${num} ${tag}</div>`;
+    }).join('') + (talks.length ? `<div class="prrel"><span class="prname">${talks[0].currency} ${
+      talks.map(x => x.title).join(', ')}</span> <span class="dim">— ${talks.length === 1 ? 'a speech or statement' : 'speeches and statements'}: no number, the tone is what moves it</span></div>` : '');
+
+    const pointing = r.releases.filter(x => x.expect);
+    const because = pointing.length === 1
+      ? `${pointing[0].surprise === 'above' ? 'Higher' : 'Lower'} than expected usually makes ${nm} ${push(r.expect)}`
+      : `Together these usually make ${nm} ${push(r.expect)}`;
+    const spoke = talks.length > 0;
+    const verdict =
+      r.verdict === 'right' ? `<div class="prverdict ok">✓ ${because} — and it did.</div>`
+      : r.verdict === 'wrong' ? `<div class="prverdict bad">✗ ${because} — it went ${r.went} instead.</div>`
+      : r.verdict === 'flat' ? `<div class="prverdict">~ ${because} — it barely moved.</div>`
+      : r.expect === 'mixed' ? `<div class="prverdict">~ Mixed — some numbers pointed ${nm} up, some down. It ${moved(r)}.</div>`
+      : r.releases.some(x => x.surprise === 'inline') ? `<div class="prverdict">~ No surprise in the number — ${nm} still ${moved(r)}${spoke ? ', on what was said' : ''}.</div>`
+      : spoke ? `<div class="prverdict">~ Nothing to beat or miss here — ${nm} ${moved(r)} on what was said.</div>`
+      : r.releases.some(x => x.result) ? `<div class="prverdict">~ No fixed rule for which way this pushes ${nm}. It ${moved(r)}.</div>`
+      : '';
+
+    const t = r.trade;
+    const trade = !t ? ''
+      : t.skipped ? `break trade: sat out — usual move ${t.usualMovePct}% was smaller than the ${t.preRangePct}% range before it`
+      : !t.side ? 'break trade: neither side triggered'
+      : `break trade: ${t.side} · ${t.outcome === 'target' ? 'hit target' : t.outcome === 'stopped' ? 'stopped out' : 'still open at 30 min'} · ${t.rMultiple >= 0 ? '+' : ''}${t.rMultiple}R`;
+
+    return `
+      <div class="pr went-${r.went}">
+        <div class="prmove">
+          <b>${r.went === 'up' ? '▲' : r.went === 'down' ? '▼' : '•'} ${Math.abs(mv.movePct).toFixed(2)}%</b>
+          <em>${r.partial ? 'so far' : 'in 30 min'}</em>
+        </div>
+        <div class="prbody">
+          <div class="prtop"><span class="tag">${r.impact}</span><span class="dim">${fmtWhen(r.at)}</span></div>
+          ${rels}
+          <div class="prgold">${name} ${fmtPx(mv.from)} → ${fmtPx(mv.to)}
+            <span class="dim">· high ${pct(mv.upPct)} · low ${pct(mv.downPct)}</span></div>
+          ${verdict}
+          ${trade ? `<div class="prtrade">${trade}</div>` : ''}
+        </div>
+      </div>`;
+  };
+
+  const pr = n.past || {};
+  const ps = pr.summary;
+  const loud = (pr.rows || []).filter(x => x.rank >= 2);
+  const quiet = (pr.rows || []).filter(x => x.rank < 2);
+  const past = `
+    <h4>What past news did to ${nm} — last 7 days</h4>
+    ${ps && ps.count ? `
+    <div class="cgrid">
+      <div><em>releases</em><b>${ps.count}</b></div>
+      <div><em>went the expected way</em><b class="${!ps.judged ? 'dim' : ps.right * 2 >= ps.judged ? 'up' : 'down'}">${
+        ps.judged ? `${ps.right} of ${ps.judged}` : '—'}</b></div>
+      <div><em>average 30-min move</em><b>${ps.avgMovePct == null ? '—' : ps.avgMovePct + '%'}</b></div>
+      <div><em>biggest move</em><b class="${ps.biggest?.movePct >= 0 ? 'up' : 'down'}">${
+        ps.biggest ? pct(ps.biggest.movePct) : '—'}</b>${ps.biggest ? `<i class="dim prbig">${ps.biggest.title}</i>` : ''}</div>
+    </div>
+    <div class="cnote">Each row is one release: the number that came out against the forecast, then what ${nm} did in the
+      30 minutes after it. ✓ means ${nm} went the way that result normally pushes it, ✗ means it went the other way.</div>
+    <div class="prs">${loud.map(pastRow).join('') || '<div class="cnote">no high- or medium-impact releases this week</div>'}</div>
+    ${quiet.length ? `<details class="prlow"><summary>${quiet.length} low-impact release${quiet.length === 1 ? '' : 's'}</summary>
+      <div class="prs">${quiet.map(pastRow).join('')}</div></details>` : ''}`
+    : '<div class="cnote">no releases in the last seven days that move this</div>'}`;
+
+  // ── the break trade on those same releases, in one line of numbers ──
   const r = n.rule || {};
   const sum = r.summary;
   const scoreCls = !sum ? '' : sum.totalR > 0 ? 'up' : sum.totalR < 0 ? 'down' : '';
-  const rule = `
-    <h4>Every trade this rule gave — last 7 days</h4>
-    ${sum ? `
+  const rule = !sum ? '' : `
+    <h4>The break trade on those releases</h4>
     <div class="cgrid">
       <div><em>taken</em><b>${sum.count}</b></div>
       <div><em>skipped</em><b class="dim">${sum.skipped}</b></div>
@@ -1191,27 +1277,9 @@ function renderNews(n) {
         sum.winRate == null ? '—' : sum.winRate + '%'}</b></div>
       <div><em>total</em><b class="${scoreCls}">${sum.totalR >= 0 ? '+' : ''}${sum.totalR}R</b></div>
     </div>
-    ${sum.count === 0 ? `<div class="cnote">Nothing was worth taking this week — ${sum.skipped} release${sum.skipped === 1 ? '' : 's'} came up and every one failed the test above: the move each usually makes was smaller than the range you would have had to risk. That is the rule working, not the rule failing. The prints that pay — CPI, PPI, jobs, the Fed — land Thursday and Friday.</div>`
-      : sum.unresolved ? `<div class="cnote">${sum.resolved} of ${sum.count} reached a stop or a target inside the half hour; the other ${sum.unresolved} ended the window in between and are marked to market. Win rate counts only the ones that resolved.</div>` : ''}` : ''}
-    ${r.trades?.length ? `<div class="ntrades">${r.trades.map(t => `
-      <div class="ntrade ${t.outcome === 'target' ? 'win' : t.outcome === 'stopped' ? 'loss' : (t.outcome === 'no trade' || t.skipped) ? 'skip' : 'open'}">
-        <div class="ntop">
-          <span class="pill ${t.side === 'LONG' ? 'up' : t.side === 'SHORT' ? 'down' : 'dim'}">${t.skipped ? 'SKIPPED' : t.side || 'NO TRADE'}</span>
-          <b>${t.currency} ${t.title}</b>
-          <span class="tag">${t.impact}</span>
-          <span class="nres ${t.rMultiple > 0 ? 'up' : t.rMultiple < 0 ? 'down' : 'dim'}">${
-            t.rMultiple == null ? t.note || '—' : (t.rMultiple >= 0 ? '+' : '') + t.rMultiple + 'R'}</span>
-        </div>
-        ${t.side ? `<div class="nmid">${fmtPx(t.entry)} → stop ${fmtPx(t.stop)} → target ${fmtPx(t.target)}
-          <span class="dim">· ${t.outcome}</span></div>` : ''}
-        <div class="dim nbot">${fmtWhen(t.at)}${t.matchedRule ? ' · ' + t.matchedRule : ''}</div>
-      </div>`).join('')}</div>`
-      : '<div class="cnote">no releases in the last seven days that this rule has a view on</div>'}
-    <div class="cnote">Each row is the plan above, applied to a release that already happened, then walked forward
-      through the 5-minute candles. Rows marked SKIPPED are ones the rule refused before the fact — they are shown so
-      you can see what it passed on, and they are not counted against it. A bar that touches both stop and target counts
-      as a loss: with only OHLC there is no way to know which came first, and the pessimistic read is the one that
-      cannot flatter the rule.</div>`;
+    <div class="cnote">${sum.count === 0
+      ? `Nothing was worth taking — all ${sum.skipped} releases moved less than the range you would have had to risk, so the plan above sat each one out. Every row above says why.`
+      : `The plan above, applied to each release and walked through the 5-minute candles. ${sum.unresolved ? `${sum.unresolved} of ${sum.count} ended the half hour between stop and target and are marked to market; win rate counts only the ${sum.resolved} that resolved. ` : ''}A bar that touches both stop and target counts as a loss.`}</div>`;
 
   // ── the rest of the calendar, each with its direction ──
   const upcoming = n.upcoming?.length ? `<div class="ncal">` + n.upcoming.map(e => `
@@ -1244,6 +1312,7 @@ function renderNews(n) {
     <h4>Next release — and which way it points</h4>
     ${next}
     ${plan}
+    ${past}
     ${rule}
 
     <h4>The rest of the week</h4>

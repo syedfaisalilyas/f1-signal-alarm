@@ -19,7 +19,7 @@
 // and 1.1% within half an hour, three of them up" is a number you can size a
 // position against.
 
-import { fetchCandles } from './providers.js';
+import { fetchCandles, fetchCandlesDeep } from './providers.js';
 import { reactionFor, directionFor, planFor, backtest } from './newsplan.js';
 
 const CAL_URL = 'https://nfs.faireconomy.media/ff_calendar_thisweek.json';
@@ -60,7 +60,7 @@ function writeStore(events) {
   try { localStorage.setItem(LS_KEY, JSON.stringify(events.slice(-4000))); } catch { /* private mode / quota */ }
 }
 
-const TTL = { cal: 15 * 60 * 1000, news: 10 * 60 * 1000, impact: 30 * 60 * 1000 };
+const TTL = { cal: 15 * 60 * 1000, news: 10 * 60 * 1000, impact: 30 * 60 * 1000, results: 4 * 60 * 1000 };
 const cache = new Map();
 
 async function cached(key, ttl, fn) {
@@ -103,14 +103,113 @@ const IMPACT_RANK = { High: 3, Medium: 2, Low: 1, Holiday: 0 };
 // The feed is one week wide and forgets. Every fetch merges into a file keyed
 // by event id so past weeks survive, which is what makes "previous weeks" real
 // instead of an empty section.
-function archive(events) {
+function archive(events, results = []) {
   const byId = new Map(readStore().map(e => [e.id, e]));
   for (const e of events) byId.set(e.id, { ...byId.get(e.id), ...e });
   // A year is plenty and keeps the file small enough to read in one go.
   const cutoff = Date.now() - 365 * 24 * 3600 * 1000;
   const out = [...byId.values()].filter(e => e.at > cutoff).sort((a, b) => a.at - b.at);
+  if (results.length) {
+    for (const e of out) {
+      if (e.result || e.at > Date.now()) continue;
+      const r = matchResult(e, results);
+      if (r) e.result = r;
+    }
+  }
   writeStore(out);
   return out;
+}
+
+// The scanner starts every run on a clean disk, so it hands back what the last
+// run published before fetching — otherwise the archive is always one week.
+export function remember(events) {
+  if (Array.isArray(events) && events.length) archive(events);
+}
+
+// ─────────────── what the number actually was ───────────────
+//
+// ForexFactory's feed carries forecast and previous but never the actual, so
+// on its own the panel can say what a release was expected to do and never
+// what it did. TradingView's calendar publishes the actual within a minute of
+// the print. It refuses any browser origin but its own, so only Node asks it —
+// the scanner attaches results to the calendar it publishes, and the page gets
+// them from there.
+const RESULTS_URL = 'https://economic-calendar.tradingview.com/events';
+const RESULT_COUNTRIES = 'US,EU,GB,JP,CA,AU,NZ,CH,CN';
+
+async function releaseResults() {
+  if (!isNode) return [];
+  return cached('results', TTL.results, async () => {
+    const from = new Date(Date.now() - 10 * 24 * 3600 * 1000).toISOString();
+    const to = new Date().toISOString();
+    const res = await fetch(`${RESULTS_URL}?from=${from}&to=${to}&countries=${RESULT_COUNTRIES}`, {
+      headers: { 'User-Agent': UA, Origin: 'https://www.tradingview.com' },
+      signal: AbortSignal.timeout(15000)
+    });
+    if (!res.ok) throw new Error(`${res.status} results`);
+    const body = await res.json();
+    return (body.result || [])
+      .filter(r => typeof r.actual === 'number' && isFinite(r.actual))
+      .map(r => ({
+        at: new Date(r.date).getTime(), currency: r.currency, title: r.title,
+        actual: r.actual, forecast: r.forecast ?? null, previous: r.previous ?? null,
+        unit: r.unit || '', scale: r.scale || ''
+      }));
+  });
+}
+
+// The two calendars name the same release differently — "Core Retail Sales
+// m/m" is "Retail Sales Ex Autos MoM", "Federal Funds Rate" is "Fed Interest
+// Rate Decision". Both sides are reduced to the same vocabulary, then compared
+// word by word. The period (m/m, y/y) and "core" must agree exactly: CPI m/m,
+// Core CPI m/m and CPI y/y land in the same second and are different numbers.
+const TITLE_SYNONYMS = [
+  [/\bm\/m\b/g, 'mom'], [/\bq\/q\b/g, 'qoq'], [/\by\/y\b/g, 'yoy'],
+  [/\bcpi\b|inflation rate|consumer price index/g, 'inflation'],
+  [/fed interest rate decision|federal funds rate|interest rate decision|official bank rate|cash rate|main refinancing rate|overnight rate|policy rate/g, 'ratedecision'],
+  [/initial jobless claims|unemployment claims/g, 'jobless claims'],
+  [/adp non-?farm employment change|adp employment change/g, 'adp payrolls'],
+  [/non-?farm employment change|non-?farm payrolls/g, 'payrolls'],
+  [/core retail sales/g, 'retail sales ex autos'],
+  [/gdp growth rate/g, 'gdp'],
+  [/prelim uom consumer sentiment|uom consumer sentiment|michigan consumer sentiment/g, 'michigan sentiment'],
+  [/prelim uom inflation expectations|uom inflation expectations|michigan inflation expectations/g, 'michigan expectations']
+];
+const TITLE_NOISE = new Set(['prel', 'prelim', 'flash', 'final', 'advance', 'adv', 'second', 'third', 'est',
+  'estimate', 'revised', 'index', 'ny', 's', 'p', 'global', 'the', 'of', 'sa', 'change']);
+const PERIODS = ['mom', 'qoq', 'yoy'];
+
+function titleWords(title) {
+  let t = title.toLowerCase();
+  for (const [re, to] of TITLE_SYNONYMS) t = t.replace(re, to);
+  return new Set(t.split(/[^a-z0-9]+/).filter(w => w && !TITLE_NOISE.has(w)));
+}
+
+function matchResult(event, results) {
+  const want = titleWords(event.title);
+  const period = PERIODS.find(p => want.has(p)) || null;
+  let best = null, bestScore = 0;
+  for (const r of results) {
+    if (r.currency !== event.currency || Math.abs(r.at - event.at) > 5 * 60000) continue;
+    const have = titleWords(r.title);
+    if ((PERIODS.find(p => have.has(p)) || null) !== period) continue;
+    if (want.has('core') !== have.has('core')) continue;
+    const shared = [...want].filter(w => have.has(w)).length;
+    const score = shared / new Set([...want, ...have]).size;
+    if (score > bestScore) { best = r; bestScore = score; }
+  }
+  if (!best || bestScore < 0.5) return null;
+
+  // TradingView's own forecast is on the same scale as its actual. The
+  // calendar's string is the fallback, used only when its suffix agrees.
+  let forecast = best.forecast;
+  if (forecast == null && event.forecast) {
+    const m = /^[<>]?(-?\d+(?:\.\d+)?)(%|K|M|B|T)?$/.exec(event.forecast.trim());
+    const fits = m && ((m[2] === '%' && best.unit === '%') || (m[2] && m[2] === best.scale) ||
+      (!m[2] && !best.scale && best.unit !== '%'));
+    if (fits) forecast = +m[1];
+  }
+  return { actual: best.actual, forecast, previous: best.previous, unit: best.unit, scale: best.scale };
 }
 
 function readArchive() { return readStore(); }
@@ -146,11 +245,11 @@ export async function calendar() {
         impact: e.impact,
         rank: IMPACT_RANK[e.impact] ?? 0,
         forecast: e.forecast || null,
-        previous: e.previous || null,
-        actual: e.actual || null
+        previous: e.previous || null
       };
     }).filter(e => isFinite(e.at));
-    return archive(events);
+    // Results are a bonus: a failed lookup still leaves a working calendar.
+    return archive(events, await releaseResults().catch(() => []));
   });
 }
 
@@ -219,6 +318,7 @@ function measure(bars, at, windowMin) {
   const pct = v => from > 0 ? +((v - from) / from * 100).toFixed(2) : null;
   return {
     from,
+    to: close,
     movePct: pct(close),
     upPct: pct(hi),
     downPct: pct(lo),
@@ -332,6 +432,86 @@ export async function shocks({ market, symbol, instrument, days = 21, windowMin 
   });
 }
 
+// ─────────────── what each past release did ───────────────
+//
+// The question anyone asks about last week: what came out, did it beat the
+// forecast, and did gold go up or down on it — by how much. One row per
+// release time: CPI m/m, Core CPI m/m and CPI y/y print in the same second and
+// gold made one move, not three.
+const TALK = /speaks|speech|press conference|statement|minutes|testif|projections|summit|meeting/i;
+
+function surpriseOf(result) {
+  if (!result || result.forecast == null) return null;
+  const d = result.actual - result.forecast;
+  const tol = Math.max(Math.abs(result.forecast), 1) * 1e-6;
+  return d > tol ? 'above' : d < -tol ? 'below' : 'inline';
+}
+
+function pastReleases({ events, bars, instrument, symbol, trades = [], windowMin = 30 }) {
+  const byTime = new Map();
+  for (const e of events) byTime.set(e.at, [...(byTime.get(e.at) || []), e]);
+  const tradeAt = new Map(trades.map(t => [t.at, t]));
+  const now = Date.now();
+
+  const rows = [];
+  for (const [at, list] of byTime) {
+    const m = measure(bars, at, windowMin);
+    if (!m) continue;
+
+    const releases = list.sort((a, b) => b.rank - a.rank).map(e => {
+      const reaction = reactionFor(instrument, symbol, e.title, e.currency);
+      const ifAbove = reaction ? directionFor(reaction, e.currency) : null;
+      const surprise = surpriseOf(e.result);
+      const expect = !ifAbove || !surprise || surprise === 'inline' ? null
+        : surprise === 'above' ? ifAbove : ifAbove === 'up' ? 'down' : 'up';
+      return {
+        title: e.title, currency: e.currency, impact: e.impact, rank: e.rank,
+        result: e.result || null, surprise, ifAbove, expect,
+        weight: (reaction?.weight || 0) * Math.max(1, e.rank),
+        talk: !e.result && TALK.test(e.title)
+      };
+    });
+
+    // Several numbers at once can disagree. The louder, more reliable ones
+    // outvote the rest; a genuine tie is reported as mixed, not picked.
+    const score = releases.reduce((s, r) => s + (r.expect ? (r.expect === 'up' ? 1 : -1) * r.weight : 0), 0);
+    const expect = score > 0 ? 'up' : score < 0 ? 'down' : releases.some(r => r.expect) ? 'mixed' : null;
+
+    // Under 0.03% is a spread's worth of noise, not a reaction.
+    const went = Math.abs(m.movePct) < 0.03 ? 'flat' : m.direction;
+    const verdict = expect !== 'up' && expect !== 'down' ? null
+      : went === 'flat' ? 'flat' : went === expect ? 'right' : 'wrong';
+
+    const t = tradeAt.get(at);
+    rows.push({
+      at, currency: releases[0].currency, title: releases[0].title,
+      impact: releases[0].impact, rank: releases[0].rank,
+      releases, expect, went, verdict,
+      partial: now < at + windowMin * 60000,
+      move: { from: m.from, to: m.to, movePct: m.movePct, upPct: m.upPct, downPct: m.downPct, rangePct: m.rangePct },
+      trade: t ? { side: t.side || null, outcome: t.outcome, rMultiple: t.rMultiple, skipped: !!t.skipped,
+        usualMovePct: t.usualMovePct ?? null, preRangePct: t.preRangePct ?? null } : null
+    });
+  }
+  rows.sort((a, b) => b.at - a.at);
+
+  const judged = rows.filter(r => r.verdict === 'right' || r.verdict === 'wrong');
+  const done = rows.filter(r => !r.partial);
+  const biggest = done.reduce((a, b) => (!a || Math.abs(b.move.movePct) > Math.abs(a.move.movePct) ? b : a), null);
+  return {
+    windowMin,
+    rows,
+    summary: {
+      count: rows.length,
+      withResult: rows.filter(r => r.releases.some(x => x.result)).length,
+      judged: judged.length,
+      right: judged.filter(r => r.verdict === 'right').length,
+      avgMovePct: done.length ? +(done.reduce((s, r) => s + Math.abs(r.move.movePct), 0) / done.length).toFixed(2) : null,
+      biggest: biggest ? { title: `${biggest.currency} ${biggest.title}`, at: biggest.at, movePct: biggest.move.movePct } : null
+    }
+  };
+}
+
 // ─────────────── one call for the report ───────────────
 
 export async function newsFor({ market, symbol, instrument, days = 14 }) {
@@ -341,7 +521,8 @@ export async function newsFor({ market, symbol, instrument, days = 14 }) {
     headlines(instrument, symbol).catch(() => []),
     impact({ market, symbol, instrument, days }).catch(() => ({ events: [], summary: null })),
     shocks({ market, symbol, instrument, days: Math.max(days, 21) }).catch(() => ({ moves: [] })),
-    fetchCandles(market, symbol, '5m', 1500).catch(() => [])
+    // A week of 5m is ~2000 bars, one more than a single request returns.
+    fetchCandlesDeep(market, symbol, '5m', 2200).catch(() => [])
   ]);
 
   const own = e => drv.currencies.includes(e.currency);
@@ -401,6 +582,9 @@ export async function newsFor({ market, symbol, instrument, days = 14 }) {
   const rule = bars.length
     ? backtest({ events: pastWeek, bars, instrument, symbol })
     : { trades: [], summary: null };
+  const past = bars.length
+    ? pastReleases({ events: pastWeek, bars, instrument, symbol, trades: rule.trades })
+    : { rows: [], summary: null };
   const priorSame = nextHigh
     ? (imp.events || []).filter(e => e.title === nextHigh.title).slice(0, 4)
     : [];
@@ -425,6 +609,7 @@ export async function newsFor({ market, symbol, instrument, days = 14 }) {
     price,
     plan,
     rule,
+    past,
     // The calendar feed only publishes the current week, so event-anchored
     // history starts empty and fills week by week. Say so rather than letting
     // an empty section read as "nothing ever moved this".

@@ -584,16 +584,37 @@ button.resmore:hover{color:var(--info);background:var(--panel2)}
 .nxplan.up{border-color:#1d4a2c}.nxplan.down{border-color:#5c1d1d}
 .nxplanhead{display:flex;align-items:center;gap:8px;margin-bottom:9px;font-size:11px;line-height:1.35}
 
-.ntrades{display:flex;flex-direction:column;gap:7px}
-.ntrade{border:1px solid var(--line);border-left-width:3px;border-radius:9px;padding:9px 11px;background:var(--panel2)}
-.ntrade.win{border-left-color:var(--up)}
-.ntrade.loss{border-left-color:var(--down)}
-.ntrade.open{border-left-color:var(--warn)}
-.ntrade.skip{border-left-color:var(--faint);opacity:.7}
-.ntop{display:flex;align-items:center;gap:8px;flex-wrap:wrap;font-size:12px}
-.nres{margin-left:auto;font-weight:700;font-variant-numeric:tabular-nums;white-space:nowrap}
-.nmid{font-size:12px;margin-top:5px;font-variant-numeric:tabular-nums}
-.nbot{font-size:10px;margin-top:4px;line-height:1.45}
+/* what past releases did — the number, and which way the price went */
+.prs{display:flex;flex-direction:column;gap:8px}
+.pr{display:grid;grid-template-columns:92px minmax(0,1fr);border:1px solid var(--line);border-radius:10px;
+  background:var(--panel2);overflow:hidden}
+.prmove{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px;padding:10px 6px;
+  background:rgba(255,255,255,.03);border-right:1px solid var(--line);text-align:center}
+.prmove b{font-size:17px;font-variant-numeric:tabular-nums;white-space:nowrap}
+.prmove em{font-style:normal;font-size:10px;color:var(--faint);text-transform:uppercase;letter-spacing:.05em}
+.pr.went-up .prmove{background:rgba(38,208,124,.08)}.pr.went-up .prmove b{color:var(--up)}
+.pr.went-down .prmove{background:rgba(255,84,112,.08)}.pr.went-down .prmove b{color:var(--down)}
+.pr.went-flat .prmove b{color:var(--dim)}
+.prbody{padding:10px 12px;min-width:0;font-size:12px;line-height:1.5}
+.prtop{display:flex;align-items:center;gap:8px;margin-bottom:4px;font-size:11px}
+.prrel{overflow-wrap:anywhere}
+.prname{font-weight:650;color:var(--fg);margin-right:2px}
+.sur{display:inline-block;margin-left:4px;padding:0 6px;border-radius:5px;font-size:10px;font-weight:700;
+  letter-spacing:.03em;color:var(--info);border:1px solid #1d3a5c;white-space:nowrap}
+.sur.same{color:var(--dim);border-color:var(--line)}
+.prgold{margin-top:5px;font-variant-numeric:tabular-nums}
+.prverdict{margin-top:5px;padding:5px 8px;border-radius:6px;background:var(--panel);color:var(--dim)}
+.prverdict.ok{color:var(--up);background:rgba(38,208,124,.07)}
+.prverdict.bad{color:var(--down);background:rgba(255,84,112,.07)}
+.prtrade{margin-top:5px;font-size:10px;color:var(--faint)}
+.prbig{display:block;font-size:10px;font-style:normal;line-height:1.35;margin-top:2px}
+.prlow{margin-top:8px}
+.prlow summary{cursor:pointer;font-size:12px;color:var(--dim);padding:6px 2px}
+.prlow .prs{margin-top:6px;opacity:.85}
+@media(max-width:640px){
+  .pr{grid-template-columns:1fr}
+  .prmove{flex-direction:row;justify-content:flex-start;gap:8px;padding:7px 12px;border-right:0;border-bottom:1px solid var(--line)}
+}
 
 .ncal{display:flex;flex-direction:column}
 .ncalrow{display:grid;grid-template-columns:9px minmax(0,1.6fr) auto auto 78px;gap:10px;align-items:center;

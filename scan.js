@@ -17,7 +17,7 @@ import { scanUniverse } from './src/ignition.js';
 import { hotSweep, hotMessage } from './src/hotwatch.js';
 import { buildMessage, dispatch, initPush } from './src/notify.js';
 import { refresh as refreshLeverage, dump as leverageDump } from './src/leverage.js';
-import { calendar as newsCalendar, headlines as newsHeadlines } from './src/news.js';
+import { calendar as newsCalendar, headlines as newsHeadlines, remember as rememberCalendar } from './src/news.js';
 import { INSTRUMENTS } from './src/symbols.js';
 
 const DIR = path.join(process.cwd(), 'cloud');
@@ -272,7 +272,11 @@ if (Object.keys(lev).length) fs.writeFileSync(LEVERAGE, JSON.stringify(lev));
 // is published for MEXC. Failure here must never fail a scan: alerts are the
 // job, news is a convenience.
 try {
-  const cal = await newsCalendar();
+  // The runner's disk is new every time, and the calendar feed forgets last
+  // week on Sunday. What the previous run published is the archive.
+  try { rememberCalendar(JSON.parse(fs.readFileSync(NEWS, 'utf8')).calendar); } catch { /* first run */ }
+  // Two weeks back is all the page reads, and every page load downloads this.
+  const cal = (await newsCalendar()).filter(e => e.at > Date.now() - 15 * 24 * 3600 * 1000);
   const heads = {};
   for (const inst of INSTRUMENTS) {
     // Gold is the only instrument that works without a forex key, so it gets

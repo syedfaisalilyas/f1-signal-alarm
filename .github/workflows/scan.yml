@@ -41,6 +41,7 @@ jobs:
         run: |
           if git fetch --depth=1 origin state 2>/dev/null; then
             git show FETCH_HEAD:state.json > cloud/state.json
+            git show FETCH_HEAD:news.json > cloud/news.json 2>/dev/null || rm -f cloud/news.json
             echo "restored state from branch"
           else
             echo "no state branch yet — seeding from the committed watchlist"
