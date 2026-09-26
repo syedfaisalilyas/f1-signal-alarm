@@ -48,7 +48,7 @@ const fx = (id, cot, inv, jpy = false) => ({
 });
 const MAJORS = ['BTCUSDT', 'ETHUSDT', 'SOLUSDT', 'XRPUSDT', 'BNBUSDT', 'DOGEUSDT'];
 const NOT_CRYPTO = /^(XAU|XAG|XPT|XPD|PAXG|XAUT)/;
-export const MARKETS = [
+const MARKETS = [
   { id: 'XAUUSD', name: 'Gold', cls: 'gold', src: 'duka', inst: 'XAU/USD', dp: 2, min: 5, max: 15, buf: 0.5, news: ['USD'], cot: '088691', usdSide: -1 },
   fx('EURUSD', '099741', false), fx('GBPUSD', '096742', false), fx('AUDUSD', '232741', false),
   fx('NZDUSD', '112741', false), fx('USDJPY', '097741', true, true), fx('USDCAD', '090741', true),
@@ -192,15 +192,15 @@ function pivots(b, k = 3) {
 }
 
 // ─── the A+ zone ───
-function aplus(m, { m5, m15, h1 }, newsNear) {
+function aplus(m, { m5, m15, h1 }, newsNear, nowSec = Date.now() / 1000) {
   const i = m5.length - 1, last = m5[i], now = last.c;
   const tH = trend(h1), tM = trend(m15), t5 = trend(m5);
   const c = m5.map(x => x.c), e20 = ema(c, 20), e50 = ema(c, 50), A = atrAt(m5, i);
   const atrs = []; for (let k = i - 199; k <= i; k++) atrs.push(atrAt(m5, k));
   const medAtr = atrs.sort((a, b) => a - b)[100], live = A >= 0.7 * medAtr;
-  const hr = new Date().getUTCHours() + new Date().getUTCMinutes() / 60;
+  const hr = new Date(nowSec * 1000).getUTCHours() + new Date(nowSec * 1000).getUTCMinutes() / 60;
   const inSess = !m.sess || (hr >= m.sess[0] && hr < m.sess[1]);
-  const fresh = Date.now() / 1000 - last.t < 30 * 60;                 // market open
+  const fresh = nowSec - last.t < 30 * 60;                            // market open
   const piv = pivots(m5);
   const base = { trend: { h1: tH, m15: tM, m5: t5 }, price: now, atr: A, volRatio: A / medAtr, live, inSess, fresh, ema20: e20[i] };
 
@@ -608,13 +608,21 @@ async function main() {
     const live = calls.find(c => c.market === m.id && c.status === 'active');
     if (live) live.price = z.price;
     const sig = x => +x.toPrecision(6);
+    // volatility: [range %, change %] over the last 5m bar, 1 h and 24 h
+    const win = n => {
+      const w = bars.m5.slice(-n);
+      if (!w.length) return null;
+      const hi = Math.max(...w.map(b => b.h)), lo = Math.min(...w.map(b => b.l));
+      return [+((hi - lo) / lo * 100).toFixed(2), +((w.at(-1).c / w[0].o - 1) * 100).toFixed(2)];
+    };
+    const vol = { m5: win(1), h1: win(12), d1: win(288) };
     markets.push({
       id: m.id, name: m.name || m.id, cls: m.cls, dp: m.dp, tv: m.tv, price: z.price, major: !!m.major,
       turnover: m.turnover ? Math.round(m.turnover) : undefined,
       chg24: bars.h1.length > 24 ? +(z.price / bars.h1.at(-25).c - 1).toFixed(5) : 0,
       spark: bars.h1.slice(-48).filter((_, j, a) => deep || j % 2 === 0 || j === a.length - 1).map(b => sig(b.c)),
       trend: z.trend, status: z.status, side: z.side, zone: z.zone && z.zone.map(sig), blockers: z.blockers || [],
-      open: z.fresh, checks, deep, lean: Math.sign(leanSum), leanScore: leanSum
+      open: z.fresh, checks, deep, vol, lean: Math.sign(leanSum), leanScore: leanSum
     });
   }
 
@@ -630,5 +638,5 @@ async function main() {
     console.log(`  ${mk.id.padEnd(8)} ${String(mk.price).padEnd(10)} ${mk.status.padEnd(9)} H1 ${mk.trend.h1} M15 ${mk.trend.m15} M5 ${mk.trend.m5}  lean ${mk.leanScore}  ${mk.blockers[0] || ''}`);
 }
 
-export { learn, lossWhy };
+export { learn, lossWhy, aplus, rollup, mexcGet, dukaBars, cryptoUniverse, MARKETS as FIXED, ema, atrAt, trend };
 if (process.argv[1]?.endsWith('calls.js')) main().catch(e => { console.error('calls failed:', e); process.exit(1); });

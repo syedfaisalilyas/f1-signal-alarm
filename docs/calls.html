@@ -85,11 +85,11 @@ h2::after{content:"";flex:1;height:1px;background:var(--line)}
 .ladder .tick{position:absolute;top:0;transform:translateX(-50%);font-size:10.5px;color:var(--dim);white-space:nowrap}
 .ladder .tick.b{top:27px}
 .ladder .now{position:absolute;top:10px;width:4px;height:20px;border-radius:3px;background:#fff;box-shadow:0 0 0 3px rgba(255,255,255,.18),0 0 18px rgba(255,255,255,.6);transform:translateX(-50%);transition:left .6s}
-.lv{display:grid;grid-template-columns:1fr 1fr 1fr auto;gap:6px;margin-top:10px}
+.lv{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:6px;margin-top:10px}
 .lv div{min-width:0;padding:9px 9px;border-radius:12px;background:rgba(0,0,0,.25);border:1px solid var(--line)}
 .lv small{display:block;color:var(--faint);font-size:10.5px;text-transform:uppercase;letter-spacing:.08em}
-.lv b{font-size:13px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;display:block}
-@media (max-width:440px){.lv{grid-template-columns:1fr 1fr}}
+.lv b{font-size:12.5px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;display:block}
+@media (max-width:360px){.lv{grid-template-columns:1fr 1fr}}
 .lv .tp b{color:var(--up)} .lv .sl b{color:var(--down)}
 .zone{margin-top:10px;font-size:12.5px;color:var(--dim)}
 .zone b{color:var(--fg);font-weight:600}
@@ -197,6 +197,39 @@ h2::after{content:"";flex:1;height:1px;background:var(--line)}
 .toast b{display:block;font-size:14.5px}
 footer{margin-top:36px;color:var(--faint);font-size:12px;text-align:center;line-height:1.6}
 .hidden{display:none!important}
+/* filter bar */
+.fbar{display:flex;gap:8px;overflow-x:auto;scrollbar-width:none;padding:2px 0 4px;margin-top:8px}
+.fbar::-webkit-scrollbar{display:none}
+.fg{display:flex;gap:3px;padding:3px;border-radius:12px;background:var(--card);border:1px solid var(--line);flex:none}
+.fg button{border:0;background:transparent;color:var(--dim);font:600 12.5px Inter,sans-serif;padding:7px 11px;border-radius:9px;cursor:pointer;white-space:nowrap}
+.fg button:hover{color:var(--fg)}
+.fg button.on{background:var(--card2);color:var(--fg);box-shadow:inset 0 0 0 1px var(--line)}
+.fg button.on.take{color:var(--up)} .fg button.on.half{color:var(--warn)} .fg button.on.skip{color:var(--down)}
+.fg button.on.hot{background:linear-gradient(135deg,rgba(245,196,81,.25),rgba(255,157,92,.2));color:var(--gold)}
+.fnote{color:var(--faint);font-size:12px;margin:6px 2px 0}
+/* journal button + section */
+.jbtn{border:1px solid var(--line);background:rgba(255,255,255,.05);color:var(--fg);font:600 11.5px Inter,sans-serif;padding:5px 9px;border-radius:9px;cursor:pointer;white-space:nowrap}
+.jbtn:hover{background:rgba(245,196,81,.15);border-color:rgba(245,196,81,.45)}
+.jbtn.in{color:var(--gold);border-color:rgba(245,196,81,.45);background:rgba(245,196,81,.1)}
+.jstats{display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin-bottom:10px}
+@media (max-width:640px){.jstats{grid-template-columns:repeat(2,1fr)}}
+.jrow{display:grid;grid-template-columns:auto 1fr auto auto;gap:12px;align-items:center;padding:12px 16px;border-bottom:1px solid var(--line);font-size:13.5px}
+.jrow:last-child{border:0}
+.jrow .x{border:0;background:transparent;color:var(--faint);cursor:pointer;font-size:15px;padding:4px}
+.jrow .x:hover{color:var(--down)}
+.res.active{background:rgba(245,196,81,.12);color:var(--gold)}
+.jtools{display:flex;justify-content:flex-end;gap:8px;margin-top:8px}
+/* volatility */
+.vt{display:flex;gap:8px;align-items:center;margin-bottom:10px}
+.vol{border-radius:18px;border:1px solid var(--line);overflow:hidden}
+.vr{display:grid;grid-template-columns:28px minmax(0,1.3fr) minmax(0,2fr) 76px 34px;gap:10px;align-items:center;padding:11px 14px;border-bottom:1px solid var(--line);cursor:pointer;font-size:13.5px}
+.vr:last-child{border:0}
+.vr:hover{background:var(--card)}
+.vr .rk{color:var(--faint);font-weight:700;font-size:12px}
+.vr .bar{height:6px;border-radius:9px;background:rgba(255,255,255,.07);overflow:hidden}
+.vr .bar i{display:block;height:100%;border-radius:9px;background:linear-gradient(90deg,#ff9d5c,var(--gold))}
+.vr .tv{padding:4px 7px}
+.zb{font-size:10px;font-weight:700;color:var(--gold);margin-left:6px}
 .lesson{display:flex;gap:12px;align-items:flex-start;padding:12px 14px;border-radius:14px;background:var(--card);border:1px solid var(--line);margin-bottom:8px;font-size:13.5px}
 .lesson .tag{flex:none;font-size:10.5px;font-weight:800;letter-spacing:.08em;padding:4px 8px;border-radius:7px;text-transform:uppercase}
 .lesson.on{border-color:rgba(255,181,71,.4);background:rgba(255,181,71,.06)}
@@ -232,17 +265,25 @@ footer{margin-top:36px;color:var(--faint);font-size:12px;text-align:center;line-
     <button data-f="forex" style="--c:var(--forex)">💱 Forex <span class="cnt" id="c-forex">–</span></button>
     <button data-f="crypto" style="--c:var(--crypto)">₿ Crypto <span class="cnt" id="c-crypto">–</span></button>
   </div></nav>
+  <div class="fbar" id="fbar"></div>
+  <div class="fnote" id="fnote"></div>
 
   <section class="stats" id="stats"></section>
 
-  <h2>What the losses taught</h2>
-  <section id="lessons"></section>
+  <div id="jwrap" class="hidden"><h2>📒 My journal</h2><section id="journal"></section></div>
 
   <h2>Live A+ calls</h2>
   <section id="live"><div class="skel"></div></section>
 
   <h2>Zones to watch</h2>
   <section class="watch" id="watch"></section>
+
+  <h2>🔥 Top volatility</h2>
+  <div class="vt"><div class="fg" id="voltf"><button data-v="m5">5 min</button><button data-v="h1">1 hour</button><button data-v="d1">24 hours</button></div><span class="fnote" style="margin:0">biggest high–low range</span></div>
+  <section id="vol"></section>
+
+  <h2>What the losses taught</h2>
+  <section id="lessons"></section>
 
   <h2>Market pulse</h2>
   <div class="tools"><input id="q" type="search" placeholder="Search a market — btc, pepe, gold, eurusd…" autocomplete="off"></div>
@@ -278,6 +319,21 @@ const store = { get(k, d) { try { return localStorage.getItem(k) ?? d; } catch {
 
 let data = null, filter = store.get('f1callsFilter', 'all'), query = '', showAll = false, showAllWatch = false;
 const px = {};                                   // live prices: id -> { p, prev, t }
+const F = Object.assign({ verdict: 'all', hot: false, side: 'all', liq: 'all' }, (() => { try { return JSON.parse(store.get('f1callsF', '{}')); } catch { return {}; } })());
+let volTf = store.get('f1callsVol', 'h1'), volAll = false, rank = {};
+let J = (() => { try { return JSON.parse(store.get('f1journal', '[]')); } catch { return []; } })();
+const saveJ = () => store.set('f1journal', JSON.stringify(J));
+const inJ = id => J.some(j => j.id === id);
+const hotOf = v => v.agree >= 3 && v.oppose === 0;
+// the extra filters, for anything with a side and sentiment
+function passF(market, side, v) {
+  if (F.side !== 'all' && (side > 0 ? 'buy' : 'sell') !== F.side) return false;
+  if (F.verdict !== 'all' && v && v.call !== F.verdict) return false;
+  if (F.hot && v && !hotOf(v)) return false;
+  if (F.liq !== 'all') { const r = rank[market]; if (r != null && r >= (F.liq === 'top50' ? 50 : 100)) return false; }
+  return true;
+}
+const passLiq = id => F.liq === 'all' || rank[id] == null || rank[id] < (F.liq === 'top50' ? 50 : 100);
 const livePx = (id, fallback) => px[id]?.p ?? fallback;
 const TV_ICON = '<svg viewBox="0 0 36 28" fill="currentColor"><path d="M14 22H7V11H0V4h14v18zM28 22h-8l7.5-18h8L28 22z"/><circle cx="20" cy="8" r="4"/></svg>';
 const tvUrl = tv => `https://www.tradingview.com/chart/?symbol=${encodeURIComponent(tv)}&interval=5`;
@@ -316,6 +372,8 @@ function callCard(c) {
   const vk = v.call.split(' ')[0];
   return `<article class="call ${side}">
     <div class="row"><span class="side">${side.toUpperCase()}</span><span class="mkt">${esc(c.name)}</span><span class="chip ${c.cls}">${CLS[c.cls]}</span><span class="grade">A+</span></div>
+    <div class="row" style="margin-top:8px"><button class="jbtn ${inJ(c.id) ? 'in' : ''}" data-j="${c.id}">${inJ(c.id) ? '✓ In journal' : '+ Journal'}</button>
+      ${hotOf(v) ? '<span class="chip" style="color:var(--gold);border-color:rgba(245,196,81,.4)">🔥 highly confirmed</span>' : ''}</div>
     <div class="row" style="margin-top:6px"><span class="age" style="margin:0">opened ${ago(c.openedAt)} · now <span class="num ${pxCls(c.market)}">${fmt(now, dp)}</span> · <span class="${prog >= 0 ? 'up' : 'down'}">${prog >= 0 ? '+' : ''}${prog.toFixed(2)}R</span></span>
       <span style="margin-left:auto" class="row">${px[c.market] ? '<span class="livetag"><i></i>LIVE</span>' : ''}${tvBtn(c.tv || data.markets.find(m => m.id === c.market)?.tv)}</span></div>
     ${c.lessons?.length ? `<div class="warnbox">📚 <b>Lesson says skip:</b> ${c.lessons.map(esc).join(' · ')}</div>` : ''}
@@ -332,9 +390,8 @@ function callCard(c) {
       <div><small>Entry</small><b>${fmt(c.entry, dp)}</b></div>
       <div class="sl"><small>Stop</small><b>${fmt(c.sl, dp)}</b></div>
       <div class="tp"><small>Target</small><b>${fmt(c.tp, dp)}</b></div>
-      <div><small>R:R</small><b>1:${c.rr}</b></div>
     </div>
-    <div class="zone">A+ zone <b class="num">${fmt(c.zone[0], dp)} – ${fmt(c.zone[1], dp)}</b> · pullback to EMA20, strong 5m close</div>
+    <div class="zone">A+ zone <b class="num">${fmt(c.zone[0], dp)} – ${fmt(c.zone[1], dp)}</b> · R:R 1:${c.rr} · pullback to EMA20, strong 5m close</div>
     <div class="senti">
       <div class="senti-h"><span>Other sentiments</span>${meter(v)}</div>
       ${checksHtml(c.checks || [], c.side)}
@@ -406,11 +463,16 @@ function render() {
     <div class="stat"><small>Live now</small><b class="num">${active.filter(inF).length}</b><em>${data.markets.filter(inF).length} markets scanned</em></div>`;
 
 
+  rank = {};
+  data.markets.filter(m => m.cls === 'crypto').sort((a, b) => (b.turnover || 0) - (a.turnover || 0)).forEach((m, k) => { rank[m.id] = k; });
+  renderFilters();
   renderLessons();
   renderLive();
+  renderJournal();
+  renderVol();
 
   const q = query.trim().toLowerCase();
-  const list = data.markets.filter(m => inF(m) && (!q || m.id.toLowerCase().includes(q) || m.name.toLowerCase().includes(q)));
+  const list = data.markets.filter(m => inF(m) && passLiq(m.id) && (!q || m.id.toLowerCase().includes(q) || m.name.toLowerCase().includes(q)));
   const shown = showAll || q ? list : list.slice(0, 48);
   $('#grid').innerHTML = shown.length ? shown.map(tile).join('') : `<div class="empty" style="grid-column:1/-1"><b>No market matches “${esc(query)}”</b></div>`;
   $('#more').classList.toggle('hidden', shown.length >= list.length);
@@ -425,6 +487,93 @@ function render() {
   $('#errs').innerHTML = data.errors?.length ? `<div class="err">Some sources didn't answer on the last scan: ${esc(data.errors.join(' · '))}</div>` : '';
   tickAge();
 }
+
+function renderFilters() {
+  const g = (key, opts) => `<div class="fg">${opts.map(([v, lbl, cls]) => `<button data-fk="${key}" data-fv="${v}" class="${cls || ''} ${String(F[key]) === String(v) ? 'on' : ''}">${lbl}</button>`).join('')}</div>`;
+  $('#fbar').innerHTML =
+    g('verdict', [['all', 'Any verdict'], ['TAKE', '✅ Take', 'take'], ['HALF SIZE', '½ Half size', 'half'], ['SKIP', '⛔ Skip', 'skip']]) +
+    `<div class="fg"><button data-fk="hot" data-fv="${!F.hot}" class="hot ${F.hot ? 'on' : ''}">🔥 Highly confirmed</button></div>` +
+    g('side', [['all', 'Buy + Sell'], ['buy', '▲ Buy'], ['sell', '▼ Sell']]) +
+    g('liq', [['all', 'All coins'], ['top50', 'Top 50 volume'], ['top100', 'Top 100 volume']]);
+  const on = [F.verdict !== 'all' && F.verdict, F.hot && '3+ agree, none oppose', F.side !== 'all' && F.side, F.liq !== 'all' && F.liq.replace('top', 'top ')].filter(Boolean);
+  $('#fnote').innerHTML = on.length ? `Showing only: ${on.map(esc).join(' · ')} — <a href="#" id="fclear" style="color:var(--gold)">clear</a>` : '';
+}
+document.addEventListener('click', e => {
+  const b = e.target.closest('[data-fk]');
+  if (b) { const k = b.dataset.fk, v = b.dataset.fv; F[k] = k === 'hot' ? v === 'true' : v; store.set('f1callsF', JSON.stringify(F)); render(); return; }
+  if (e.target.id === 'fclear') { e.preventDefault(); Object.assign(F, { verdict: 'all', hot: false, side: 'all', liq: 'all' }); store.set('f1callsF', JSON.stringify(F)); render(); }
+});
+
+function renderVol() {
+  document.querySelectorAll('#voltf button').forEach(b => b.classList.toggle('on', b.dataset.v === volTf));
+  const list = data.markets.filter(m => inF(m) && passLiq(m.id) && m.vol?.[volTf]).sort((a, b) => b.vol[volTf][0] - a.vol[volTf][0]);
+  const top = list.slice(0, volAll ? 30 : 10), max = top[0]?.vol[volTf][0] || 1;
+  $('#vol').innerHTML = top.length ? `<div class="vol">${top.map((m, k) => {
+    const [rng, chg] = m.vol[volTf], zin = m.zone && m.side && zoneState(m).inZone;
+    return `<div class="vr" data-id="${m.id}"><span class="rk">${k + 1}</span>
+      <span><b>${esc(m.name)}</b>${zin ? `<span class="zb">${m.side > 0 ? 'BUY' : 'SELL'} ZONE</span>` : ''}<br><small style="color:var(--faint)">${CLS[m.cls]}</small></span>
+      <span class="row" style="gap:10px"><span class="bar" style="flex:1"><i style="width:${rng / max * 100}%"></i></span><b class="num" style="min-width:58px;text-align:right">${rng.toFixed(2)}%</b></span>
+      <span class="num ${chg >= 0 ? 'up' : 'down'}" style="text-align:right;font-weight:600">${chg >= 0 ? '+' : ''}${chg.toFixed(2)}%</span>
+      ${tvBtn(m.tv, false, true)}</div>`;
+  }).join('')}</div>${list.length > 10 && !volAll ? '<button class="more" id="volMore">Show top 30</button>' : ''}`
+    : '<div class="empty"><b>No data for this filter</b></div>';
+}
+$('#voltf').addEventListener('click', e => { const b = e.target.closest('button'); if (!b) return; volTf = b.dataset.v; store.set('f1callsVol', volTf); renderVol(); });
+document.addEventListener('click', e => { if (e.target.id === 'volMore') { volAll = true; renderVol(); } });
+
+// ─── journal: the calls YOU took, kept on this device ───
+function renderJournal() {
+  // pick up outcomes from the cloud's record
+  let changed = false;
+  for (const j of J) {
+    const c = data?.calls.find(x => x.id === j.id);
+    if (c && (c.status !== j.status || c.r !== j.r)) { j.status = c.status; j.r = c.r; j.closedAt = c.closedAt; j.why = c.why; changed = true; }
+  }
+  if (changed) saveJ();
+  $('#jwrap').classList.toggle('hidden', !J.length);
+  if (!J.length) return;
+  const closed = J.filter(j => j.status && j.status !== 'active'), wins = closed.filter(j => j.r > 0).length;
+  const net = closed.reduce((s, j) => s + (j.r || 0), 0);
+  const open = J.filter(j => !j.status || j.status === 'active');
+  const liveR = open.reduce((s, j) => { const p = px[j.market]?.p; return s + (p ? (p - j.entry) * j.side / Math.abs(j.entry - j.sl) : 0); }, 0);
+  $('#journal').innerHTML = `<div class="jstats">
+      <div class="stat"><small>My win rate</small><b class="num ${closed.length && wins / closed.length * 100 > 100 / 3.5 ? 'up' : closed.length ? 'down' : ''}">${closed.length ? Math.round(wins / closed.length * 100) + '%' : '–'}</b><em>${wins} won · ${closed.length - wins} lost</em></div>
+      <div class="stat"><small>My result</small><b class="num ${net >= 0 ? 'up' : 'down'}">${closed.length ? (net >= 0 ? '+' : '') + net.toFixed(1) + 'R' : '–'}</b><em>closed trades</em></div>
+      <div class="stat"><small>Open</small><b class="num">${open.length}</b><em class="${liveR >= 0 ? 'up' : 'down'}">${open.length ? (liveR >= 0 ? '+' : '') + liveR.toFixed(2) + 'R live' : 'none'}</em></div>
+      <div class="stat"><small>Taken</small><b class="num">${J.length}</b><em>since ${new Date(Math.min(...J.map(j => j.addedAt))).toLocaleDateString()}</em></div>
+    </div>
+    <div class="hist">${J.slice().sort((a, b) => b.addedAt - a.addedAt).map(j => {
+      const st = !j.status || j.status === 'active' ? 'active' : j.status, p = px[j.market]?.p;
+      const r = st === 'active' ? (p ? (p - j.entry) * j.side / Math.abs(j.entry - j.sl) : null) : j.r;
+      return `<div class="jrow"><span class="res ${st}">${st === 'active' ? 'OPEN' : st === 'tp' ? 'TP' : st === 'sl' ? 'SL' : st === 'be' ? 'BE' : 'Timed out'}</span>
+        <span><b>${esc(j.name)}</b> <span class="${j.side > 0 ? 'up' : 'down'}">${j.side > 0 ? 'BUY' : 'SELL'}</span> <small class="num">@ ${fmt(j.entry, j.dp)} · SL ${fmt(j.sl, j.dp)} · TP ${fmt(j.tp, j.dp)}</small><br>
+          <small style="color:var(--faint)">${when(j.addedAt)} · sentiment said ${esc(j.verdict || '–')}</small>${j.why?.length ? `<span class="why" style="display:block;color:var(--down);font-size:11.5px">why it lost: ${esc(j.why.join(' · '))}</span>` : ''}</span>
+        <span class="num ${r > 0 ? 'up' : r < 0 ? 'down' : ''}" style="font-weight:700">${r == null ? '–' : (r > 0 ? '+' : '') + r.toFixed(2) + 'R'}</span>
+        <button class="x" data-jx="${j.id}" title="Remove from journal">✕</button></div>`;
+    }).join('')}</div>
+    <div class="jtools"><button class="more" id="jcsv" style="margin:0">Export CSV</button></div>`;
+}
+document.addEventListener('click', e => {
+  const add = e.target.closest('[data-j]');
+  if (add) {
+    const c = data.calls.find(x => x.id === add.dataset.j);
+    if (c && !inJ(c.id)) {
+      J.push({ id: c.id, market: c.market, name: c.name, cls: c.cls, dp: c.dp, side: c.side, entry: c.entry, sl: c.sl, tp: c.tp, rr: c.rr,
+               verdict: (c.verdict || verdictOf(c.side, c.checks || [])).call, addedAt: Date.now(), status: c.status, r: c.r });
+      saveJ(); notify('Added to your journal', `${c.name} ${c.side > 0 ? 'BUY' : 'SELL'} @ ${fmt(c.entry, c.dp)}`);
+    } else if (c) $('#jwrap').scrollIntoView({ behavior: 'smooth' });
+    renderLive(); renderJournal(); return;
+  }
+  const x = e.target.closest('[data-jx]');
+  if (x) { J = J.filter(j => j.id !== x.dataset.jx); saveJ(); renderLive(); renderJournal(); return; }
+  if (e.target.id === 'jcsv') {
+    const rows = [['date', 'market', 'side', 'entry', 'sl', 'tp', 'verdict', 'status', 'R']].concat(J.map(j =>
+      [new Date(j.addedAt).toISOString(), j.name, j.side > 0 ? 'BUY' : 'SELL', j.entry, j.sl, j.tp, j.verdict, j.status || 'active', j.r ?? '']));
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(new Blob([rows.map(r => r.join(',')).join('\n')], { type: 'text/csv' }));
+    a.download = 'f1-journal.csv'; a.click();
+  }
+});
 
 function renderLessons() {
   const L = data.learned || { lessons: [], post: null, trained: 0 };
@@ -442,19 +591,20 @@ function renderLessons() {
 // The parts that move every second: open calls, zones, tile prices.
 function watchList() {
   const active = data.calls.filter(c => c.status === 'active');
-  return data.markets.filter(m => inF(m) && m.side && m.zone && (m.status === 'watching' || m.status === 'trend') && !active.some(c => c.market === m.id))
+  return data.markets.filter(m => inF(m) && m.side && m.zone && (m.status === 'watching' || m.status === 'trend') && !active.some(c => c.market === m.id) && passF(m.id, m.side, verdictOf(m.side, m.checks)))
     .sort((a, b) => zoneState(b).inZone - zoneState(a).inZone || (b.status === 'watching') - (a.status === 'watching') || zoneState(a).away - zoneState(b).away);
 }
 function renderLive() {
   if (!data) return;
-  const live = data.calls.filter(c => c.status === 'active' && inF(c));
+  const live = data.calls.filter(c => c.status === 'active' && inF(c) && passF(c.market, c.side, c.verdict || verdictOf(c.side, c.checks || [])));
   $('#live').innerHTML = live.length
     ? `<div class="calls">${live.map(callCard).join('')}</div>`
     : `<div class="empty"><b>No A+ trade right now</b>A+ is rare on purpose. The closest setups are below — they turn into a call the moment a strong 5m candle closes out of the zone.</div>`;
   const w = watchList(), cap = showAllWatch ? w.length : 12;
   $('#watch').innerHTML = w.length ? w.slice(0, cap).map(watchCard).join('') +
       (w.length > cap ? `<button class="more" id="moreWatch" style="grid-column:1/-1">Show all ${w.length} zones</button>` : '')
-    : `<div class="empty" style="grid-column:1/-1"><b>Nothing lined up</b>No market has H1, M15 and M5 trending the same way right now.</div>`;
+    : `<div class="empty" style="grid-column:1/-1"><b>Nothing lined up${F.verdict !== 'all' || F.hot || F.side !== 'all' || F.liq !== 'all' ? ' with these filters' : ''}</b>No market matches right now.</div>`;
+  if (!$('#jwrap').classList.contains('hidden')) renderJournal();
   document.querySelectorAll('[data-px]').forEach(el => {
     const m = data.markets.find(x => x.id === el.dataset.px);
     if (m && px[m.id]) { el.textContent = fmt(px[m.id].p, m.dp); el.className = 'px num ' + pxCls(m.id); }
@@ -484,8 +634,8 @@ function openSheet(id) {
 $('#sheet').addEventListener('click', e => { if (e.target.id === 'sheet') $('#sheet').classList.remove('open'); });
 document.addEventListener('keydown', e => { if (e.key === 'Escape') $('#sheet').classList.remove('open'); });
 document.addEventListener('click', e => {
-  if (e.target.closest('a')) return;                       // TradingView links open on their own
   if (e.target.id === 'moreWatch') { showAllWatch = true; renderLive(); return; }
+  if (e.target.closest('a, button')) return;               // links and buttons do their own thing
   const el = e.target.closest('[data-id]'); if (el) openSheet(el.dataset.id);
 });
 $('#q').addEventListener('input', e => { query = e.target.value; render(); });
@@ -568,7 +718,7 @@ const byId = id => data.markets.find(m => m.id === id);
 let busy1 = false, busy3 = false;
 setInterval(async () => {                                           // open calls: every second
   if (!data || document.hidden || busy1) return;
-  const ms = data.calls.filter(c => c.status === 'active').map(c => byId(c.market)).filter(Boolean);
+  const ms = [...new Set([...data.calls.filter(c => c.status === 'active').map(c => c.market), ...J.filter(j => !j.status || j.status === 'active').map(j => j.market)])].map(byId).filter(Boolean);
   if (!ms.length) return;
   busy1 = true;
   try { await refreshPx(ms); checkCalls(); renderLive(); } finally { busy1 = false; }
