@@ -643,3 +643,8 @@ button.resmore:hover{color:var(--info);background:var(--panel2)}
 .ncalrow{row-gap:3px}
 .ncwhat{grid-column:2 / -1;font-size:11px;line-height:1.5;padding-bottom:2px}
 @media(max-width:640px){.ncwhat{grid-column:1 / -1}}
+
+/* Trade Calls button */
+.calls-btn{display:inline-flex;align-items:center;gap:4px;text-decoration:none;color:#1a1204;font-weight:700;
+  background:linear-gradient(135deg,#ffe29a,#f5c451 50%,#e69b2e);border-color:transparent;box-shadow:0 4px 18px -6px rgba(245,196,81,.7)}
+.calls-btn:hover{filter:brightness(1.08);background:linear-gradient(135deg,#ffe29a,#f5c451 50%,#e69b2e)}
