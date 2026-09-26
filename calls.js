@@ -197,12 +197,12 @@ function aplus(m, { m5, m15, h1 }, newsNear) {
   const tH = trend(h1), tM = trend(m15), t5 = trend(m5);
   const c = m5.map(x => x.c), e20 = ema(c, 20), e50 = ema(c, 50), A = atrAt(m5, i);
   const atrs = []; for (let k = i - 199; k <= i; k++) atrs.push(atrAt(m5, k));
-  const live = A >= 0.7 * atrs.sort((a, b) => a - b)[100];
+  const medAtr = atrs.sort((a, b) => a - b)[100], live = A >= 0.7 * medAtr;
   const hr = new Date().getUTCHours() + new Date().getUTCMinutes() / 60;
   const inSess = !m.sess || (hr >= m.sess[0] && hr < m.sess[1]);
   const fresh = Date.now() / 1000 - last.t < 30 * 60;                 // market open
   const piv = pivots(m5);
-  const base = { trend: { h1: tH, m15: tM, m5: t5 }, price: now, atr: A, live, inSess, fresh, ema20: e20[i] };
+  const base = { trend: { h1: tH, m15: tM, m5: t5 }, price: now, atr: A, volRatio: A / medAtr, live, inSess, fresh, ema20: e20[i] };
 
   const min = m.min ?? now * m.minPct, max = m.max ?? now * m.maxPct, buf = m.buf ?? A * 0.1;
   for (const d of [1, -1]) {
@@ -392,19 +392,110 @@ export function verdict(side, checks) {
 }
 
 // ─── outcome tracking ───
+// Walks the bars since entry. Besides TP / SL it records what the trade went
+// through — best excursion (mfe, in R), bars to exit, and whether moving the
+// stop to breakeven at +1R would have changed the result — which is what the
+// lessons are learned from. If a breakeven lesson was active when the call
+// opened (call.mgmt.be), the stop really does move to entry at +1R.
 function settle(call, m5) {
+  const risk = Math.abs(call.entry - call.sl), d = call.side;
   const after = m5.filter(b => b.t > call.barT);
+  let mfe = 0, mae = 0, at1R = false, beTouch = false, bars = 0;
+  const out = (status, r, t) => ({ status, r: Math.round(r * 100) / 100, closedAt: t, mfe: +mfe.toFixed(2), mae: +mae.toFixed(2), bars, beTouch });
   for (const b of after) {
-    const hitSl = call.side > 0 ? b.l <= call.sl : b.h >= call.sl;
-    const hitTp = call.side > 0 ? b.h >= call.tp : b.l <= call.tp;
-    if (hitSl) return { status: 'sl', r: -1, closedAt: b.t * 1000 };       // both in one bar counts as a loss
-    if (hitTp) return { status: 'tp', r: RR, closedAt: b.t * 1000 };
+    bars++;
+    const best = ((d > 0 ? b.h : b.l) - call.entry) * d / risk, worst = ((d > 0 ? b.l : b.h) - call.entry) * d / risk;
+    const stop = call.mgmt?.be && at1R ? call.entry : call.sl;
+    const hitSl = d > 0 ? b.l <= stop : b.h >= stop;
+    const hitTp = d > 0 ? b.h >= call.tp : b.l <= call.tp;
+    if (at1R && worst <= 0) beTouch = true;
+    mae = Math.min(mae, Math.max(worst, -1));
+    if (hitSl) { mfe = Math.max(mfe, Math.min(best, RR)); return out(stop === call.entry ? 'be' : 'sl', stop === call.entry ? 0 : -1, b.t * 1000); }
+    mfe = Math.max(mfe, Math.min(best, RR));
+    if (hitTp) return out('tp', RR, b.t * 1000);
+    if (mfe >= 1) at1R = true;
   }
-  if (Date.now() - call.openedAt > EXPIRE_MS && after.length) {
-    const r = (after.at(-1).c - call.entry) * call.side / Math.abs(call.entry - call.sl);
-    return { status: 'expired', r: Math.round(r * 100) / 100, closedAt: Date.now() };
-  }
+  call.mfe = +mfe.toFixed(2);                                    // live excursion for open calls
+  if (Date.now() - call.openedAt > EXPIRE_MS && after.length)
+    return out('expired', (after.at(-1).c - call.entry) * d / risk, Date.now());
   return null;
+}
+
+// ─── learning from losses ───
+// Every closed call goes into a permanent ledger with what it looked like at
+// entry. A condition becomes a lesson only with evidence: at least 8 calls,
+// a losing average after shrinking toward zero (sum R / (n + 5)), and clearly
+// worse than calls without it. Active lessons turn matching new calls into
+// SKIP and say why; they switch themselves off again if the numbers recover.
+const SESS = h => h < 7 ? 'Asia' : h < 12 ? 'London' : h < 17 ? 'New York' : 'Late US';
+function features(m, z, checks, v) {
+  const f = {
+    market: m.id, class: m.cls, side: z.side > 0 ? 'buy' : 'sell',
+    session: SESS(new Date().getUTCHours()),
+    volatility: z.volRatio < 0.9 ? 'quiet' : z.volRatio > 1.6 ? 'wild' : 'normal',
+    stop: Math.abs(z.entry - z.sl) / z.atr > 1.6 ? 'wide' : 'tight',
+    verdict: v.call
+  };
+  for (const c of checks) if (c.key !== 'news' && c.key !== 'liq') f[c.key] = c.lean === z.side ? 'agrees' : c.lean === -z.side ? 'opposes' : 'neutral';
+  if (checks.some(c => c.warn)) f.news = 'high-impact soon';
+  return f;
+}
+const LABEL = { market: 'Market', class: 'Class', side: 'Direction', session: 'Session', volatility: 'Volatility', stop: 'Stop size', verdict: 'Sentiment verdict',
+  funds: 'Big funds (COT)', crowd: 'Crowd', etf: 'Gold ETF money', dollar: 'US dollar', yields: 'US yields', taker: 'Taker flow', funding: 'Funding', oi: 'Open interest', news: 'News' };
+const describe = (k, val) => ['funds', 'crowd', 'etf', 'dollar', 'yields', 'taker', 'funding', 'oi'].includes(k) ? `${LABEL[k]} ${val}` : `${LABEL[k] || k}: ${val}`;
+
+function learn(ledger) {
+  const closed = ledger.filter(t => t.feat);
+  const lessons = [];
+  const sum = a => a.reduce((s, t) => s + t.r, 0);
+  const groups = {};
+  for (const t of closed) for (const [k, val] of Object.entries(t.feat)) (groups[`${k}=${val}`] ??= { k, val, list: [] }).list.push(t);
+  for (const { k, val, list } of Object.values(groups)) {
+    const n = list.length;
+    if (n < (k === 'market' ? 6 : 8)) continue;
+    const rest = closed.filter(t => t.feat[k] !== val);
+    const avg = sum(list) / n, shrunk = sum(list) / (n + 5), restAvg = rest.length ? sum(rest) / rest.length : 0;
+    const wins = list.filter(t => t.r > 0).length;
+    const active = shrunk < -0.2 && avg < restAvg - 0.3;
+    if (active || (n >= 8 && avg < 0))
+      lessons.push({ id: `${k}=${val}`, kind: 'filter', key: k, val, active, n, wins, net: +sum(list).toFixed(1), avg: +avg.toFixed(2), restAvg: +restAvg.toFixed(2),
+        text: `${describe(k, val)} → ${wins}/${n} won, ${sum(list) >= 0 ? '+' : ''}${sum(list).toFixed(1)}R` + (active ? ' — calls like this are now marked SKIP' : ' — watching, not enough proof yet') });
+  }
+  // management: would breakeven at +1R have paid across ALL closed calls?
+  const beNet = closed.filter(t => t.mfe != null).reduce((s, t) => s + (t.status === 'be' || t.beTouch ? 0 : t.r), 0);
+  const realNet = sum(closed.filter(t => t.mfe != null));
+  const nm = closed.filter(t => t.mfe != null).length;
+  if (nm >= 10) {
+    const gain = beNet - realNet, active = gain >= 2 && gain / nm >= 0.15;
+    lessons.push({ id: 'manage=be', kind: 'manage', active, n: nm, net: +realNet.toFixed(1), alt: +beNet.toFixed(1),
+      text: `Stop to breakeven at +1R: ${realNet.toFixed(1)}R as traded vs ${beNet.toFixed(1)}R with it` + (active ? ' — now applied to new calls' : ' — not worth it yet') });
+  }
+  // what the losses have in common
+  const losses = closed.filter(t => t.r < 0 && t.mfe != null);
+  const post = losses.length ? {
+    n: losses.length,
+    straight: losses.filter(t => t.mfe < 0.3).length,                        // never really went our way
+    gaveBack: losses.filter(t => t.mfe >= 1).length,                         // was +1R, came all the way back
+    fast: losses.filter(t => t.bars <= 3).length                             // stopped within 15 min
+  } : null;
+  return { lessons: lessons.sort((a, b) => b.active - a.active || a.avg - b.avg), post, trained: closed.length };
+}
+function lessonsFor(feat, learned) {
+  return (learned?.lessons || []).filter(l => l.active && l.kind === 'filter' && feat[l.key] === l.val);
+}
+function lossWhy(t) {
+  const why = [];
+  if (t.mfe != null) {
+    if (t.mfe >= 1) why.push(`was +${t.mfe}R before reversing`);
+    else if (t.mfe < 0.3) why.push('went straight to the stop');
+    if (t.bars <= 3) why.push(`stopped in ${t.bars * 5} min`);
+  }
+  const f = t.feat || {};
+  const against = Object.entries(f).filter(([, v]) => v === 'opposes').map(([k]) => LABEL[k]);
+  if (against.length) why.push(`against: ${against.join(', ')}`);
+  if (f.news) why.push('news was due');
+  if (f.volatility && f.volatility !== 'normal') why.push(`${f.volatility} market`);
+  return why;
 }
 
 // gold, forex and the 50 most-traded coins ping Telegram; the rest stay on the page
@@ -437,6 +528,8 @@ async function telegram(text) {
 async function main() {
   const prev = (() => { try { return JSON.parse(fs.readFileSync(OUT, 'utf8')); } catch { return { calls: [] }; } })();
   const calls = prev.calls || [];
+  const ledger = prev.ledger || [];
+  const learned = learn(ledger);
   const errors = [];
   const soft = (name, p) => p.catch(e => { errors.push(`${name}: ${e.message}`); return null; });
 
@@ -481,6 +574,9 @@ async function main() {
       const done = settle(c, bars.m5);
       if (done) {
         Object.assign(c, done);
+        if (c.r < 0) c.why = lossWhy(c);
+        ledger.push({ id: c.id, market: c.market, cls: c.cls, side: c.side, feat: c.feat, r: c.r, status: c.status,
+          mfe: c.mfe, mae: c.mae, bars: c.bars, beTouch: c.beTouch, openedAt: c.openedAt, closedAt: c.closedAt, why: c.why });
         if (alertable(m)) await telegram(`${done.status === 'tp' ? '✅' : done.status === 'sl' ? '❌' : '⏱'} <b>${m.name || m.id} ${c.side > 0 ? 'BUY' : 'SELL'}</b> closed: ${done.status.toUpperCase()} (${done.r > 0 ? '+' : ''}${done.r}R)`);
       }
     }
@@ -489,7 +585,12 @@ async function main() {
     if (z.status === 'ready' && !calls.some(c => c.market === m.id && c.status === 'active') &&
         !calls.some(c => c.market === m.id && c.barT === z.barT)) {
       const v = verdict(z.side, checks);
+      const feat = features(m, z, checks, v);
+      const hits = lessonsFor(feat, learned);
+      if (hits.length) v.call = 'SKIP';
+      const be = learned.lessons.some(l => l.id === 'manage=be' && l.active);
       const call = {
+        feat, lessons: hits.map(l => l.text), mgmt: { be },
         id: `${m.id}-${z.barT}`, market: m.id, name: m.name || m.id, cls: m.cls, dp: m.dp, tv: m.tv, side: z.side, grade: 'A+',
         entry: z.entry, sl: z.sl, tp: z.tp, rr: RR, zone: z.zone, barT: z.barT, openedAt: Date.now(),
         status: 'active', checks, verdict: v
@@ -499,6 +600,7 @@ async function main() {
       if (alertable(m))
         await telegram(`🎯 <b>${call.name} ${z.side > 0 ? 'BUY' : 'SELL'} A+</b>\nEntry ${f(z.entry)}  SL ${f(z.sl)}  TP ${f(z.tp)} (1:${RR})\n` +
           `Sentiment: ${v.agree} agree / ${v.oppose} oppose → <b>${v.call}</b>\n` +
+          (hits.length ? `📚 Lesson: ${hits.map(l => l.text).join('; ')}\n` : '') + (be ? 'Move stop to entry at +1R (lesson)\n' : '') +
           checks.filter(c => c.lean).map(c => `${c.lean === z.side ? '✅' : '⚠️'} ${c.label}`).join('\n') +
           `\nhttps://www.tradingview.com/chart/?symbol=${encodeURIComponent(m.tv)}&interval=5`);
     }
@@ -518,7 +620,8 @@ async function main() {
 
   // keep 30 days of history
   const keep = calls.filter(c => c.status === 'active' || Date.now() - (c.closedAt || c.openedAt) < 30 * 864e5);
-  const doc = { updatedAt: Date.now(), rr: RR, markets, calls: keep, errors, cotDate: Object.values(cotData || {})[0]?.date || null };
+  const doc = { updatedAt: Date.now(), rr: RR, markets, calls: keep, errors, cotDate: Object.values(cotData || {})[0]?.date || null,
+    ledger: ledger.slice(-3000), learned: learn(ledger) };
   fs.mkdirSync(DIR, { recursive: true });
   fs.writeFileSync(OUT, JSON.stringify(doc));
   console.log(`calls: ${markets.length}/${all.length} markets, ${Object.values(ctx.flow).filter(Boolean).length} with crypto positioning, ${keep.filter(c => c.status === 'active').length} active, ${keep.length} kept` +
@@ -527,4 +630,5 @@ async function main() {
     console.log(`  ${mk.id.padEnd(8)} ${String(mk.price).padEnd(10)} ${mk.status.padEnd(9)} H1 ${mk.trend.h1} M15 ${mk.trend.m15} M5 ${mk.trend.m5}  lean ${mk.leanScore}  ${mk.blockers[0] || ''}`);
 }
 
-main().catch(e => { console.error('calls failed:', e); process.exit(1); });
+export { learn, lossWhy };
+if (process.argv[1]?.endsWith('calls.js')) main().catch(e => { console.error('calls failed:', e); process.exit(1); });

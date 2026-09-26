@@ -197,6 +197,18 @@ h2::after{content:"";flex:1;height:1px;background:var(--line)}
 .toast b{display:block;font-size:14.5px}
 footer{margin-top:36px;color:var(--faint);font-size:12px;text-align:center;line-height:1.6}
 .hidden{display:none!important}
+.lesson{display:flex;gap:12px;align-items:flex-start;padding:12px 14px;border-radius:14px;background:var(--card);border:1px solid var(--line);margin-bottom:8px;font-size:13.5px}
+.lesson .tag{flex:none;font-size:10.5px;font-weight:800;letter-spacing:.08em;padding:4px 8px;border-radius:7px;text-transform:uppercase}
+.lesson.on{border-color:rgba(255,181,71,.4);background:rgba(255,181,71,.06)}
+.lesson.on .tag{background:rgba(255,181,71,.18);color:var(--warn)}
+.lesson .tag.w{background:rgba(255,255,255,.07);color:var(--dim)}
+.post{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin-bottom:12px}
+@media (max-width:640px){.post{grid-template-columns:1fr}}
+.post div{padding:12px 14px;border-radius:14px;background:var(--card);border:1px solid var(--line);font-size:12.5px;color:var(--dim)}
+.post b{display:block;font-size:20px;color:var(--fg)}
+.warnbox{margin-top:10px;padding:10px 12px;border-radius:12px;background:rgba(255,181,71,.08);border:1px solid rgba(255,181,71,.3);color:#ffd28a;font-size:12.5px}
+.res.be{background:rgba(94,176,255,.12);color:var(--forex)}
+.h .why{display:block;color:var(--down);opacity:.8;font-size:11.5px;margin-top:2px}
 .err{margin-top:14px;padding:12px 14px;border-radius:14px;background:rgba(255,93,125,.08);border:1px solid rgba(255,93,125,.25);color:#ffb3c1;font-size:13px}
 .skel{height:120px;border-radius:22px;background:linear-gradient(90deg,var(--card),var(--card2),var(--card));background-size:200% 100%;animation:sh 1.2s infinite}
 @keyframes sh{to{background-position:-200% 0}}
@@ -222,6 +234,9 @@ footer{margin-top:36px;color:var(--faint);font-size:12px;text-align:center;line-
   </div></nav>
 
   <section class="stats" id="stats"></section>
+
+  <h2>What the losses taught</h2>
+  <section id="lessons"></section>
 
   <h2>Live A+ calls</h2>
   <section id="live"><div class="skel"></div></section>
@@ -303,6 +318,8 @@ function callCard(c) {
     <div class="row"><span class="side">${side.toUpperCase()}</span><span class="mkt">${esc(c.name)}</span><span class="chip ${c.cls}">${CLS[c.cls]}</span><span class="grade">A+</span></div>
     <div class="row" style="margin-top:6px"><span class="age" style="margin:0">opened ${ago(c.openedAt)} · now <span class="num ${pxCls(c.market)}">${fmt(now, dp)}</span> · <span class="${prog >= 0 ? 'up' : 'down'}">${prog >= 0 ? '+' : ''}${prog.toFixed(2)}R</span></span>
       <span style="margin-left:auto" class="row">${px[c.market] ? '<span class="livetag"><i></i>LIVE</span>' : ''}${tvBtn(c.tv || data.markets.find(m => m.id === c.market)?.tv)}</span></div>
+    ${c.lessons?.length ? `<div class="warnbox">📚 <b>Lesson says skip:</b> ${c.lessons.map(esc).join(' · ')}</div>` : ''}
+    ${c.mgmt?.be ? `<div class="warnbox">📚 Move the stop to entry (${fmt(c.entry, dp)}) once it's +1R — learned from losses that came back</div>` : ''}
     ${tpHit ? `<div class="hit tp">🎯 Target reached at ${fmt(now, dp)} — book it</div>` : slHit ? `<div class="hit sl">Stop hit at ${fmt(now, dp)}</div>` : ''}
     <div class="ladder" style="--e:${pos(c.entry)}%">
       <div class="bar"></div>
@@ -389,6 +406,7 @@ function render() {
     <div class="stat"><small>Live now</small><b class="num">${active.filter(inF).length}</b><em>${data.markets.filter(inF).length} markets scanned</em></div>`;
 
 
+  renderLessons();
   renderLive();
 
   const q = query.trim().toLowerCase();
@@ -399,13 +417,26 @@ function render() {
   $('#more').textContent = `Show all ${list.length} markets`;
 
   $('#hist').innerHTML = closed.length ? `<div class="hist">${closed.map(c => `
-    <div class="h"><span class="res ${c.status}">${c.status === 'tp' ? 'TP' : c.status === 'sl' ? 'SL' : 'Timed out'}</span>
-      <span><b>${esc(c.name)}</b> <span class="${c.side > 0 ? 'up' : 'down'}">${c.side > 0 ? 'BUY' : 'SELL'}</span> <small class="num">@ ${fmt(c.entry, c.dp)}</small><br><small>${when(c.openedAt)} · sentiment said ${esc(c.verdict?.call || '–')}</small></span>
+    <div class="h"><span class="res ${c.status}">${c.status === 'tp' ? 'TP' : c.status === 'sl' ? 'SL' : c.status === 'be' ? 'BE' : 'Timed out'}</span>
+      <span><b>${esc(c.name)}</b> <span class="${c.side > 0 ? 'up' : 'down'}">${c.side > 0 ? 'BUY' : 'SELL'}</span> <small class="num">@ ${fmt(c.entry, c.dp)}</small><br><small>${when(c.openedAt)} · sentiment said ${esc(c.verdict?.call || '–')}</small>${c.why?.length ? `<span class="why">why it lost: ${esc(c.why.join(' · '))}</span>` : ''}</span>
       <span class="num ${c.r > 0 ? 'up' : 'down'}" style="font-weight:700">${c.r > 0 ? '+' : ''}${c.r}R</span><span></span></div>`).join('')}</div>`
     : `<div class="empty"><b>No closed calls yet</b>Every call is tracked to its target, stop or 24 hours, so this fills up with the real record.</div>`;
 
   $('#errs').innerHTML = data.errors?.length ? `<div class="err">Some sources didn't answer on the last scan: ${esc(data.errors.join(' · '))}</div>` : '';
   tickAge();
+}
+
+function renderLessons() {
+  const L = data.learned || { lessons: [], post: null, trained: 0 };
+  const ls = L.lessons.filter(l => l.kind === 'manage' || filter === 'all' || l.key !== 'class' || l.val === filter);
+  const p = L.post;
+  $('#lessons').innerHTML =
+    (p ? `<div class="post">
+      <div><b>${p.gaveBack}/${p.n}</b>losses were +1R in profit first, then came back</div>
+      <div><b>${p.straight}/${p.n}</b>went straight to the stop — entry was wrong</div>
+      <div><b>${p.fast}/${p.n}</b>stopped within 15 minutes — stop too tight or late entry</div></div>` : '') +
+    (ls.length ? ls.map(l => `<div class="lesson ${l.active ? 'on' : ''}"><span class="tag ${l.active ? '' : 'w'}">${l.active ? 'Applied' : 'Watching'}</span><span>${esc(l.text)}</span></div>`).join('')
+      : `<div class="empty"><b>Learning — ${L.trained} closed call${L.trained === 1 ? '' : 's'} so far</b>Every call is saved with what it looked like at entry: session, volatility, stop size and every sentiment check. After a loss it records how far the trade got first. Once 8 similar calls show a losing pattern it becomes a lesson — new calls that match are marked SKIP, and it switches itself off if the numbers recover.</div>`);
 }
 
 // The parts that move every second: open calls, zones, tile prices.
