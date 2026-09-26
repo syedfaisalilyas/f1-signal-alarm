@@ -218,7 +218,11 @@ footer{margin-top:36px;color:var(--faint);font-size:12px;text-align:center;line-
 <script>
 const SRC = new URLSearchParams(location.search).get('src') === 'local'
   ? '../cloud/calls.json'
-  : 'https://raw.githubusercontent.com/syedfaisalilyas/f1-signal-alarm/state/calls.json';
+  : 'https://raw.githubusercontent.com/syedfaisalilyas/f1-signal-alarm/calls/calls.json';
+// The contents API is fresh; raw.githubusercontent caches for 5 min. The API
+// allows 60 unauthenticated requests an hour per IP, so it's tried first and
+// raw is the fallback once that runs out.
+const API = 'https://api.github.com/repos/syedfaisalilyas/f1-signal-alarm/contents/calls.json?ref=calls';
 const $ = s => document.querySelector(s);
 const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
 const store = { get(k, d) { try { return localStorage.getItem(k) ?? d; } catch { return d; } }, set(k, v) { try { localStorage.setItem(k, v); } catch {} } };
@@ -380,7 +384,10 @@ $('#seg').addEventListener('click', e => { const b = e.target.closest('button');
 async function load() {
   const btn = $('#refresh'); btn.classList.remove('spin'); void btn.offsetWidth; btn.classList.add('spin');
   try {
-    const r = await fetch(SRC + (SRC.startsWith('http') ? '' : '?t=' + Date.now()), { cache: 'no-store' });
+    let r = SRC.startsWith('http')
+      ? await fetch(API, { cache: 'no-store', headers: { Accept: 'application/vnd.github.raw+json' } }).catch(() => null)
+      : null;
+    if (!r || !r.ok) r = await fetch(SRC + (SRC.startsWith('http') ? '' : '?t=' + Date.now()), { cache: 'no-store' });
     if (!r.ok) throw new Error('HTTP ' + r.status);
     data = await r.json();
     render();
@@ -394,7 +401,7 @@ async function load() {
 }
 $('#refresh').addEventListener('click', load);
 load();
-setInterval(load, 60e3);
+setInterval(load, 90e3);
 setInterval(tickAge, 30e3);
 </script>
 </body>

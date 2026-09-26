@@ -42,7 +42,6 @@ jobs:
           if git fetch --depth=1 origin state 2>/dev/null; then
             git show FETCH_HEAD:state.json > cloud/state.json
             git show FETCH_HEAD:news.json > cloud/news.json 2>/dev/null || rm -f cloud/news.json
-            git show FETCH_HEAD:calls.json > cloud/calls.json 2>/dev/null || rm -f cloud/calls.json
             echo "restored state from branch"
           else
             echo "no state branch yet — seeding from the committed watchlist"
@@ -54,16 +53,6 @@ jobs:
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
           NTFY_TOPIC: ${{ secrets.NTFY_TOPIC }}
         run: node scan.js
-
-      # A+ trade calls for gold / forex / crypto with sentiment (docs/calls.html).
-      # Its own step so a flaky data source can never stop the alarm scanner.
-      - name: Trade calls
-        continue-on-error: true
-        timeout-minutes: 3
-        env:
-          TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
-          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
-        run: node calls.js
 
       # Signals are rare, so this is the way to confirm delivery still works
       # without waiting for the market to give you one.
@@ -91,7 +80,6 @@ jobs:
           cp cloud/state.json cloud/snapshot.json "$pub"/
           cp cloud/leverage.json "$pub"/ 2>/dev/null || true
           cp cloud/news.json "$pub"/ 2>/dev/null || true
-          cp cloud/calls.json "$pub"/ 2>/dev/null || true
           cd "$pub"
           git init -q -b state
           git config user.name "f1-alarm bot"
