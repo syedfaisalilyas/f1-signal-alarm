@@ -269,6 +269,7 @@ footer{margin-top:36px;color:var(--faint);font-size:12px;text-align:center;line-
   <div class="fnote" id="fnote"></div>
 
   <section class="stats" id="stats"></section>
+  <div id="health"></div>
 
   <div id="jwrap" class="hidden"><h2>📒 My journal</h2><section id="journal"></section></div>
 
@@ -376,7 +377,7 @@ function callCard(c) {
       ${hotOf(v) ? '<span class="chip" style="color:var(--gold);border-color:rgba(245,196,81,.4)">🔥 highly confirmed</span>' : ''}</div>
     <div class="row" style="margin-top:6px"><span class="age" style="margin:0">opened ${ago(c.openedAt)} · now <span class="num ${pxCls(c.market)}">${fmt(now, dp)}</span> · <span class="${prog >= 0 ? 'up' : 'down'}">${prog >= 0 ? '+' : ''}${prog.toFixed(2)}R</span></span>
       <span style="margin-left:auto" class="row">${px[c.market] ? '<span class="livetag"><i></i>LIVE</span>' : ''}${tvBtn(c.tv || data.markets.find(m => m.id === c.market)?.tv)}</span></div>
-    ${c.lessons?.length ? `<div class="warnbox">📚 <b>Lesson says skip:</b> ${c.lessons.map(esc).join(' · ')}</div>` : ''}
+    ${c.lessons?.length ? `<div class="warnbox">📚 <b>Lessons:</b> ${c.lessons.map(l => esc(l.text || l)).join(' · ')}</div>` : ''}
     ${c.mgmt?.be ? `<div class="warnbox">📚 Move the stop to entry (${fmt(c.entry, dp)}) once it's +1R — learned from losses that came back</div>` : ''}
     ${tpHit ? `<div class="hit tp">🎯 Target reached at ${fmt(now, dp)} — book it</div>` : slHit ? `<div class="hit sl">Stop hit at ${fmt(now, dp)}</div>` : ''}
     <div class="ladder" style="--e:${pos(c.entry)}%">
@@ -578,12 +579,22 @@ document.addEventListener('click', e => {
 function renderLessons() {
   const L = data.learned || { lessons: [], post: null, trained: 0 };
   const ls = L.lessons.filter(l => l.kind === 'manage' || filter === 'all' || l.key !== 'class' || l.val === filter);
-  const p = L.post;
+  const p = L.post, bt = L.backtest;
+  const live7 = data.calls.filter(c => c.status !== 'active' && c.r != null && Date.now() - (c.closedAt || 0) < 7 * 864e5);
+  const liveAvg = live7.length ? live7.reduce((s, c) => s + c.r, 0) / live7.length : null;
+  $('#health').innerHTML = bt ? `<div class="warnbox" style="margin:14px 0 0;font-size:13px;line-height:1.5">
+      <b>Rule health — be careful.</b> Replaying these exact A+ rules on ${bt.trades.toLocaleString()} trades (${bt.from.slice(5)} → ${bt.to.slice(5)}, fees in):
+      ${bt.winPct}% win, <b>${bt.avgR}R per trade</b>, last week ${bt.recentAvgR}R. ${esc(bt.note)}
+      ${liveAvg != null ? `Live calls, last 7 days: ${live7.length} closed, <b>${liveAvg >= 0 ? '+' : ''}${liveAvg.toFixed(2)}R per trade</b>.` : ''}
+      Treat calls as ideas to check on the chart, keep size small, and prefer the ones the filters mark ✅ Take / 🔥 highly confirmed.</div>` : '';
   $('#lessons').innerHTML =
     (p ? `<div class="post">
       <div><b>${p.gaveBack}/${p.n}</b>losses were +1R in profit first, then came back</div>
       <div><b>${p.straight}/${p.n}</b>went straight to the stop — entry was wrong</div>
       <div><b>${p.fast}/${p.n}</b>stopped within 15 minutes — stop too tight or late entry</div></div>` : '') +
+    (L.btLessons?.length ? `<div class="fnote" style="margin:4px 2px 8px">From the ${L.backtest.trades.toLocaleString()}-trade replay — worse in both halves, so each knocks a new call's verdict down one step:</div>` +
+      L.btLessons.map(t => `<div class="lesson on"><span class="tag">Applied</span><span>${esc(t)}</span></div>`).join('') +
+      '<div class="fnote" style="margin:12px 2px 8px">From live calls:</div>' : '') +
     (ls.length ? ls.map(l => `<div class="lesson ${l.active ? 'on' : ''}"><span class="tag ${l.active ? '' : 'w'}">${l.active ? 'Applied' : 'Watching'}</span><span>${esc(l.text)}</span></div>`).join('')
       : `<div class="empty"><b>Learning — ${L.trained} closed call${L.trained === 1 ? '' : 's'} so far</b>Every call is saved with what it looked like at entry: session, volatility, stop size and every sentiment check. After a loss it records how far the trade got first. Once 8 similar calls show a losing pattern it becomes a lesson — new calls that match are marked SKIP, and it switches itself off if the numbers recover.</div>`);
 }

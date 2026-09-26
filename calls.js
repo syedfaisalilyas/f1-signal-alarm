@@ -480,6 +480,20 @@ function learn(ledger) {
   } : null;
   return { lessons: lessons.sort((a, b) => b.active - a.active || a.avg - b.avg), post, trained: closed.length };
 }
+// Lessons from replaying these exact rules over 4,658 trades (1–26 Sep 2026,
+// tools/calls-backtest.mjs + calls-learn.mjs, fees included). Only conditions
+// that were worse in BOTH the older and the newer half are here — each one
+// knocks the verdict down a step. Numbers are avg R per trade (older|newer),
+// against +0.06|-0.24 for all crypto calls.
+const BACKTEST = { from: '2026-09-01', to: '2026-09-26', trades: 4658, avgR: -0.09, winPct: 26, recentAvgR: -0.24,
+  note: 'Every day since 19 Sep lost money — no filter made the recent week positive.' };
+const BT_LESSONS = [
+  { id: 'bt-ny', test: (m, z, hr) => m.cls === 'crypto' && hr >= 12 && hr < 17, text: 'New York session: −0.05|−0.30R per trade in the replay' },
+  { id: 'bt-quiet', test: (m, z) => m.cls === 'crypto' && z.volRatio < 1.04, text: 'Quiet market (ATR below normal): −0.07|−0.23R per trade in the replay' },
+  { id: 'bt-liquid', test: m => m.cls === 'crypto' && m.liqRank != null && m.liqRank < 100, text: 'Top-100 volume coin: −0.15|−0.31R per trade in the replay' }
+];
+const STEP = { 'TAKE': 'HALF SIZE', 'HALF SIZE': 'SKIP', 'SKIP': 'SKIP', 'WAIT FOR NEWS': 'WAIT FOR NEWS' };
+
 function lessonsFor(feat, learned) {
   return (learned?.lessons || []).filter(l => l.active && l.kind === 'filter' && feat[l.key] === l.val);
 }
@@ -539,7 +553,9 @@ async function main() {
     soft('gld', gldFlow()), soft('dollar', dollar()), soft('bonds', bonds()), soft('calendar', calendar())
   ]);
   const all = [...MARKETS, ...(coins || [])];
-  topCoins = new Set((coins || []).slice().sort((a, b) => b.turnover - a.turnover).slice(0, 50).map(c => c.id));
+  const byTurnover = (coins || []).slice().sort((a, b) => b.turnover - a.turnover);
+  byTurnover.forEach((c, k) => { c.liqRank = k; });
+  topCoins = new Set(byTurnover.slice(0, 50).map(c => c.id));
   const ctx = { cot: cotData, gld, dxy, bonds: bnd, cal, flow: {} };
 
   // pass 1: candles + the A+ zone for everything
@@ -588,6 +604,9 @@ async function main() {
       const feat = features(m, z, checks, v);
       const hits = lessonsFor(feat, learned);
       if (hits.length) v.call = 'SKIP';
+      const bt = BT_LESSONS.filter(l => l.test(m, z, new Date().getUTCHours()));
+      for (const _ of bt) v.call = STEP[v.call];
+      hits.push(...bt.map(l => ({ text: l.text })));
       const be = learned.lessons.some(l => l.id === 'manage=be' && l.active);
       const call = {
         feat, lessons: hits.map(l => l.text), mgmt: { be },
@@ -629,7 +648,7 @@ async function main() {
   // keep 30 days of history
   const keep = calls.filter(c => c.status === 'active' || Date.now() - (c.closedAt || c.openedAt) < 30 * 864e5);
   const doc = { updatedAt: Date.now(), rr: RR, markets, calls: keep, errors, cotDate: Object.values(cotData || {})[0]?.date || null,
-    ledger: ledger.slice(-3000), learned: learn(ledger) };
+    ledger: ledger.slice(-3000), learned: { ...learn(ledger), backtest: BACKTEST, btLessons: BT_LESSONS.map(l => l.text) } };
   fs.mkdirSync(DIR, { recursive: true });
   fs.writeFileSync(OUT, JSON.stringify(doc));
   console.log(`calls: ${markets.length}/${all.length} markets, ${Object.values(ctx.flow).filter(Boolean).length} with crypto positioning, ${keep.filter(c => c.status === 'active').length} active, ${keep.length} kept` +
