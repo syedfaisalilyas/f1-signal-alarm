@@ -167,7 +167,36 @@ h2::after{content:"";flex:1;height:1px;background:var(--line)}
 .grab{width:40px;height:4px;border-radius:9px;background:rgba(255,255,255,.2);margin:-6px auto 14px}
 .why{margin:10px 0 4px;padding:10px 12px;border-radius:12px;background:rgba(255,255,255,.04);font-size:13px;color:var(--dim)}
 
+/* TradingView + live bits */
+.tv{display:inline-flex;align-items:center;gap:5px;font:600 11.5px Inter,sans-serif;color:var(--fg);padding:5px 9px;border-radius:9px;background:rgba(255,255,255,.06);border:1px solid var(--line);white-space:nowrap;cursor:pointer;transition:.15s}
+.tv:hover{background:rgba(41,98,255,.25);border-color:rgba(41,98,255,.6)}
+.tv svg{width:13px;height:13px}
+.tv.big{justify-content:center;width:100%;padding:12px;font-size:14px;border-radius:14px;margin-top:14px;background:linear-gradient(135deg,#2962ff,#5b45ff);border-color:transparent}
+.t .tv{position:absolute;right:10px;bottom:10px;padding:4px 7px;opacity:.75}
+.t .tv:hover{opacity:1}
+.t .lean{padding-right:34px}
+.livetag{display:inline-flex;align-items:center;gap:5px;font-size:10.5px;font-weight:700;letter-spacing:.08em;color:var(--up)}
+.livetag i{width:6px;height:6px;border-radius:50%;background:var(--up);animation:blink 1s infinite}
+@keyframes blink{50%{opacity:.25}}
+.hit{margin-top:10px;padding:10px 12px;border-radius:12px;font-weight:700;font-size:13.5px}
+.hit.tp{background:rgba(47,227,163,.15);color:var(--up)} .hit.sl{background:rgba(255,93,125,.14);color:var(--down)}
+.w.inzone{border-color:rgba(245,196,81,.55);box-shadow:0 0 0 1px rgba(245,196,81,.25),0 10px 40px -18px rgba(245,196,81,.6)}
+.w .dist{display:flex;align-items:center;gap:8px;margin-top:8px;font-size:12px;color:var(--dim)}
+.w .dist .track{flex:1;height:5px;border-radius:9px;background:rgba(255,255,255,.07);overflow:hidden}
+.w .dist .track i{display:block;height:100%;border-radius:9px;background:linear-gradient(90deg,var(--gold),#ff9d5c);transition:width .4s}
+.px-up{animation:fu .7s} .px-dn{animation:fd .7s}
+@keyframes fu{from{color:var(--up)}} @keyframes fd{from{color:var(--down)}}
+.tools{display:flex;gap:8px;margin-bottom:12px}
+.tools input{flex:1;min-width:0;padding:11px 14px;border-radius:14px;border:1px solid var(--line);background:var(--card);color:var(--fg);font:500 14px Inter,sans-serif;outline:none}
+.tools input:focus{border-color:rgba(255,255,255,.25)}
+.more{display:block;margin:12px auto 0;padding:10px 18px;border-radius:12px;border:1px solid var(--line);background:var(--card);color:var(--fg);font:600 13px Inter,sans-serif;cursor:pointer}
+.more:hover{background:var(--card2)}
+.iconbtn.on{border-color:rgba(47,227,163,.5);color:var(--up)}
+.toast{position:fixed;left:50%;bottom:22px;transform:translateX(-50%);z-index:30;display:flex;flex-direction:column;gap:8px;width:min(420px,calc(100% - 32px))}
+.toast div{padding:12px 16px;border-radius:14px;background:#111827;border:1px solid var(--line);box-shadow:0 18px 40px -10px rgba(0,0,0,.7);font-size:13.5px;animation:up .25s ease}
+.toast b{display:block;font-size:14.5px}
 footer{margin-top:36px;color:var(--faint);font-size:12px;text-align:center;line-height:1.6}
+.hidden{display:none!important}
 .err{margin-top:14px;padding:12px 14px;border-radius:14px;background:rgba(255,93,125,.08);border:1px solid rgba(255,93,125,.25);color:#ffb3c1;font-size:13px}
 .skel{height:120px;border-radius:22px;background:linear-gradient(90deg,var(--card),var(--card2),var(--card));background-size:200% 100%;animation:sh 1.2s infinite}
 @keyframes sh{to{background-position:-200% 0}}
@@ -181,6 +210,7 @@ footer{margin-top:36px;color:var(--faint);font-size:12px;text-align:center;line-
       <h1><span>Trade Calls</span></h1>
       <div class="sub"><i class="pulse" id="pulse"></i><span id="upd">loading…</span></div>
     </div>
+    <button class="iconbtn" id="alertsBtn" title="Notify me on this device">🔕</button>
     <button class="iconbtn" id="refresh" title="Refresh">↻</button>
   </header>
 
@@ -200,7 +230,9 @@ footer{margin-top:36px;color:var(--faint);font-size:12px;text-align:center;line-
   <section class="watch" id="watch"></section>
 
   <h2>Market pulse</h2>
+  <div class="tools"><input id="q" type="search" placeholder="Search a market — btc, pepe, gold, eurusd…" autocomplete="off"></div>
   <section class="grid" id="grid"></section>
+  <button class="more hidden" id="more"></button>
 
   <h2>Closed calls · 30 days</h2>
   <section id="hist"></section>
@@ -209,10 +241,12 @@ footer{margin-top:36px;color:var(--faint);font-size:12px;text-align:center;line-
   <footer>
     A+ = H1, M15 and M5 trend agree · pullback into the EMA20 zone after a fresh impulse · strong 5m close · 2.5R target.<br>
     Sentiment is a second opinion, not a guarantee. In the year backtest these rules made money overall but broke even over the last 6 months.<br>
-    Data: Dukascopy · Gate.io · CFTC COT · Nasdaq · ForexFactory. Scanned every 5 min in the cloud.
+    A new call can only appear when a 5-minute candle closes — the cloud checks 20 s after every close. Prices on this page update live: every second for open calls, every 3 seconds for zones.<br>
+    Crypto = every USDT perpetual listed on both Binance and MEXC. Data: Dukascopy · Binance · MEXC · Gate.io · CFTC COT · Nasdaq · ForexFactory.
   </footer>
 </div>
 
+<div class="toast" id="toast"></div>
 <div class="sheet" id="sheet"><div class="sheet-in" id="sheetIn"></div></div>
 
 <script>
@@ -227,7 +261,12 @@ const $ = s => document.querySelector(s);
 const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
 const store = { get(k, d) { try { return localStorage.getItem(k) ?? d; } catch { return d; } }, set(k, v) { try { localStorage.setItem(k, v); } catch {} } };
 
-let data = null, filter = store.get('f1callsFilter', 'all');
+let data = null, filter = store.get('f1callsFilter', 'all'), query = '', showAll = false, showAllWatch = false;
+const px = {};                                   // live prices: id -> { p, prev, t }
+const livePx = (id, fallback) => px[id]?.p ?? fallback;
+const TV_ICON = '<svg viewBox="0 0 36 28" fill="currentColor"><path d="M14 22H7V11H0V4h14v18zM28 22h-8l7.5-18h8L28 22z"/><circle cx="20" cy="8" r="4"/></svg>';
+const tvUrl = tv => `https://www.tradingview.com/chart/?symbol=${encodeURIComponent(tv)}&interval=5`;
+const tvBtn = (tv, big, iconOnly) => tv ? `<a class="tv${big ? ' big' : ''}" href="${tvUrl(tv)}" target="_blank" rel="noopener" title="Open on TradingView">${TV_ICON}${big ? 'Open on TradingView' : iconOnly ? '' : 'Chart'}</a>` : '';
 
 const fmt = (x, dp) => x == null || isNaN(x) ? '–' : Number(x).toLocaleString('en-US', { minimumFractionDigits: dp, maximumFractionDigits: dp });
 const ago = ms => { const m = Math.round((Date.now() - ms) / 60e3); return m < 1 ? 'just now' : m < 60 ? `${m} min ago` : m < 1440 ? `${Math.floor(m / 60)} h ${m % 60} min ago` : `${Math.floor(m / 1440)} d ago`; };
@@ -256,12 +295,15 @@ function meter(v) { return `<span class="meter">${'<i class="a"></i>'.repeat(v.a
 function callCard(c) {
   const side = c.side > 0 ? 'buy' : 'sell', dp = c.dp, lo = Math.min(c.sl, c.tp), hi = Math.max(c.sl, c.tp);
   const pos = x => Math.max(0, Math.min(100, (x - lo) / (hi - lo) * 100));
-  const now = c.price ?? c.entry, prog = (now - c.entry) * c.side / Math.abs(c.entry - c.sl);
+  const now = livePx(c.market, c.price ?? c.entry), prog = (now - c.entry) * c.side / Math.abs(c.entry - c.sl);
+  const tpHit = c.side > 0 ? now >= c.tp : now <= c.tp, slHit = c.side > 0 ? now <= c.sl : now >= c.sl;
   const v = c.verdict || verdictOf(c.side, c.checks || []);
   const vk = v.call.split(' ')[0];
   return `<article class="call ${side}">
     <div class="row"><span class="side">${side.toUpperCase()}</span><span class="mkt">${esc(c.name)}</span><span class="chip ${c.cls}">${CLS[c.cls]}</span><span class="grade">A+</span></div>
-    <div class="age">opened ${ago(c.openedAt)} · now <span class="num">${fmt(now, dp)}</span> · <span class="${prog >= 0 ? 'up' : 'down'}">${prog >= 0 ? '+' : ''}${prog.toFixed(2)}R</span></div>
+    <div class="row" style="margin-top:6px"><span class="age" style="margin:0">opened ${ago(c.openedAt)} · now <span class="num ${pxCls(c.market)}">${fmt(now, dp)}</span> · <span class="${prog >= 0 ? 'up' : 'down'}">${prog >= 0 ? '+' : ''}${prog.toFixed(2)}R</span></span>
+      <span style="margin-left:auto" class="row">${px[c.market] ? '<span class="livetag"><i></i>LIVE</span>' : ''}${tvBtn(c.tv || data.markets.find(m => m.id === c.market)?.tv)}</span></div>
+    ${tpHit ? `<div class="hit tp">🎯 Target reached at ${fmt(now, dp)} — book it</div>` : slHit ? `<div class="hit sl">Stop hit at ${fmt(now, dp)}</div>` : ''}
     <div class="ladder" style="--e:${pos(c.entry)}%">
       <div class="bar"></div>
       <span class="tick" style="left:${pos(c.sl)}%">SL</span>
@@ -299,23 +341,34 @@ function tile(m) {
   const w = Math.abs(score) * 50, col = score >= 0 ? 'var(--up)' : 'var(--down)';
   return `<div class="t" data-id="${m.id}">
     <div class="top"><span class="nm">${esc(m.name)}${m.open ? '' : '<span class="closed">closed</span>'}</span><span class="ch ${m.chg24 >= 0 ? 'up' : 'down'}">${m.chg24 >= 0 ? '+' : ''}${(m.chg24 * 100).toFixed(2)}%</span></div>
-    <div class="px num">${fmt(m.price, m.dp)}</div>
+    <div class="px num ${pxCls(m.id)}" data-px="${m.id}">${fmt(livePx(m.id, m.price), m.dp)}</div>
     ${spark(m.spark, m.chg24 >= 0)}
     <div class="tf">${tfChip('H1', m.trend.h1)}${tfChip('M15', m.trend.m15)}${tfChip('M5', m.trend.m5)}</div>
-    <div class="lean">Money<div class="track"><div class="fill" style="background:${col};${score >= 0 ? `left:50%;width:${w}%` : `right:50%;width:${w}%`}"></div></div>${m.leanScore > 0 ? 'bullish' : m.leanScore < 0 ? 'bearish' : 'neutral'}</div>
+    ${tvBtn(m.tv, false, true)}
+    <div class="lean">Money<div class="track"><div class="fill" style="background:${col};${score >= 0 ? `left:50%;width:${w}%` : `right:50%;width:${w}%`}"></div></div>${!m.deep ? 'no data' : m.leanScore > 0 ? 'bullish' : m.leanScore < 0 ? 'bearish' : 'neutral'}</div>
   </div>`;
 }
 
+function zoneState(m) {
+  const now = livePx(m.id, m.price), [lo, hi] = m.zone;
+  const inZone = now >= lo && now <= hi, edge = m.side > 0 ? hi : lo;
+  const away = inZone ? 0 : Math.abs(now - (now > hi ? hi : lo)) / now;
+  return { now, inZone, away, edge };
+}
 function watchCard(m) {
-  const hot = m.status === 'watching', v = verdictOf(m.side, m.checks), side = m.side > 0 ? 'BUY' : 'SELL';
+  const z = zoneState(m), hot = m.status === 'watching' || z.inZone, v = verdictOf(m.side, m.checks), side = m.side > 0 ? 'BUY' : 'SELL';
+  const close = Math.max(4, 100 - Math.min(1, z.away / 0.01) * 96);
   return `<div class="w" data-id="${m.id}">
-    <div class="row"><span class="stage ${hot ? 'hot' : 'cool'}">${hot ? 'In the zone' : 'Trend aligned'}</span><b>${esc(m.name)}</b><span class="chip ${m.cls}">${CLS[m.cls]}</span>
+    <div class="row"><span class="stage ${hot ? 'hot' : 'cool'}">${z.inZone ? 'In the zone' : m.status === 'watching' ? 'At the zone' : 'Trend aligned'}</span><b>${esc(m.name)}</b><span class="chip ${m.cls}">${CLS[m.cls]}</span>
       <span class="${m.side > 0 ? 'up' : 'down'}" style="margin-left:auto;font-weight:800;font-size:13px">${side}</span></div>
-    <p>Zone <b class="num">${fmt(m.zone[0], m.dp)} – ${fmt(m.zone[1], m.dp)}</b> · now <span class="num">${fmt(m.price, m.dp)}</span></p>
-    <p>${esc(m.blockers[0] || '')}</p>
+    <p>Zone <b class="num">${fmt(m.zone[0], m.dp)} – ${fmt(m.zone[1], m.dp)}</b> · now <span class="num ${pxCls(m.id)}">${fmt(z.now, m.dp)}</span>${px[m.id] ? ' <span class="livetag"><i></i>LIVE</span>' : ''}</p>
+    <div class="dist"><div class="track"><i style="width:${close}%"></i></div>${z.inZone ? '<b style="color:var(--gold)">in the zone now</b>' : (z.away * 100).toFixed(2) + '% away'}</div>
+    <p>${z.inZone ? 'Waiting for a strong 5m candle to close out of the zone — the call fires at the close' : esc(m.blockers[0] || '')}</p>
     <div class="senti-h" style="margin:10px 0 0"><span style="font-size:11px;color:var(--dim)">Sentiment ${v.agree} agree · ${v.oppose} oppose</span>${meter(v)}</div>
+    <div style="margin-top:10px">${tvBtn(m.tv)}</div>
   </div>`;
 }
+const pxCls = id => { const x = px[id]; return !x || x.prev == null || x.p === x.prev || Date.now() - x.t > 1500 ? '' : x.p > x.prev ? 'px-up' : 'px-dn'; };
 
 function render() {
   if (!data) return;
@@ -335,17 +388,15 @@ function render() {
     <div class="stat"><small>Closed calls</small><b class="num">${closed.length}</b><em>${wins} won · ${closed.length - wins} lost</em></div>
     <div class="stat"><small>Live now</small><b class="num">${active.filter(inF).length}</b><em>${data.markets.filter(inF).length} markets scanned</em></div>`;
 
-  const live = active.filter(inF);
-  $('#live').innerHTML = live.length
-    ? `<div class="calls">${live.map(callCard).join('')}</div>`
-    : `<div class="empty"><b>No A+ trade right now</b>A+ is rare on purpose. The closest setups are below — they turn into a call the moment a strong 5m candle closes out of the zone.</div>`;
 
-  const w = data.markets.filter(m => inF(m) && m.side && (m.status === 'watching' || m.status === 'trend') && !active.some(c => c.market === m.id))
-    .sort((a, b) => (b.status === 'watching') - (a.status === 'watching'));
-  $('#watch').innerHTML = w.length ? w.map(watchCard).join('')
-    : `<div class="empty" style="grid-column:1/-1"><b>Nothing lined up</b>No market has H1, M15 and M5 trending the same way right now.</div>`;
+  renderLive();
 
-  $('#grid').innerHTML = data.markets.filter(inF).map(tile).join('');
+  const q = query.trim().toLowerCase();
+  const list = data.markets.filter(m => inF(m) && (!q || m.id.toLowerCase().includes(q) || m.name.toLowerCase().includes(q)));
+  const shown = showAll || q ? list : list.slice(0, 48);
+  $('#grid').innerHTML = shown.length ? shown.map(tile).join('') : `<div class="empty" style="grid-column:1/-1"><b>No market matches “${esc(query)}”</b></div>`;
+  $('#more').classList.toggle('hidden', shown.length >= list.length);
+  $('#more').textContent = `Show all ${list.length} markets`;
 
   $('#hist').innerHTML = closed.length ? `<div class="hist">${closed.map(c => `
     <div class="h"><span class="res ${c.status}">${c.status === 'tp' ? 'TP' : c.status === 'sl' ? 'SL' : 'Timed out'}</span>
@@ -355,6 +406,28 @@ function render() {
 
   $('#errs').innerHTML = data.errors?.length ? `<div class="err">Some sources didn't answer on the last scan: ${esc(data.errors.join(' · '))}</div>` : '';
   tickAge();
+}
+
+// The parts that move every second: open calls, zones, tile prices.
+function watchList() {
+  const active = data.calls.filter(c => c.status === 'active');
+  return data.markets.filter(m => inF(m) && m.side && m.zone && (m.status === 'watching' || m.status === 'trend') && !active.some(c => c.market === m.id))
+    .sort((a, b) => zoneState(b).inZone - zoneState(a).inZone || (b.status === 'watching') - (a.status === 'watching') || zoneState(a).away - zoneState(b).away);
+}
+function renderLive() {
+  if (!data) return;
+  const live = data.calls.filter(c => c.status === 'active' && inF(c));
+  $('#live').innerHTML = live.length
+    ? `<div class="calls">${live.map(callCard).join('')}</div>`
+    : `<div class="empty"><b>No A+ trade right now</b>A+ is rare on purpose. The closest setups are below — they turn into a call the moment a strong 5m candle closes out of the zone.</div>`;
+  const w = watchList(), cap = showAllWatch ? w.length : 12;
+  $('#watch').innerHTML = w.length ? w.slice(0, cap).map(watchCard).join('') +
+      (w.length > cap ? `<button class="more" id="moreWatch" style="grid-column:1/-1">Show all ${w.length} zones</button>` : '')
+    : `<div class="empty" style="grid-column:1/-1"><b>Nothing lined up</b>No market has H1, M15 and M5 trending the same way right now.</div>`;
+  document.querySelectorAll('[data-px]').forEach(el => {
+    const m = data.markets.find(x => x.id === el.dataset.px);
+    if (m && px[m.id]) { el.textContent = fmt(px[m.id].p, m.dp); el.className = 'px num ' + pxCls(m.id); }
+  });
 }
 
 function tickAge() {
@@ -373,12 +446,19 @@ function openSheet(id) {
     ${spark(m.spark, m.chg24 >= 0)}
     <div class="tf">${tfChip('H1', m.trend.h1)}${tfChip('M15', m.trend.m15)}${tfChip('M5', m.trend.m5)}</div>
     <div class="why"><b style="color:var(--fg)">${statusTxt}</b>${m.zone && m.side ? ` · zone <span class="num">${fmt(m.zone[0], m.dp)} – ${fmt(m.zone[1], m.dp)}</span>` : ''}<br>${esc((m.blockers || []).join(' · '))}</div>
-    <div class="senti" style="border:0;padding-top:4px"><div class="senti-h"><span>Sentiment on ${esc(m.name)}${m.side ? ` vs the ${m.side > 0 ? 'BUY' : 'SELL'}` : ''}</span></div>${checksHtml(m.checks, m.side)}</div>`;
+    <div class="senti" style="border:0;padding-top:4px"><div class="senti-h"><span>Sentiment on ${esc(m.name)}${m.side ? ` vs the ${m.side > 0 ? 'BUY' : 'SELL'}` : ''}</span></div>${m.deep ? checksHtml(m.checks, m.side) : '<div class="why">Positioning is fetched for the majors and for coins that line up — this one is neither right now.</div>'}</div>
+    ${tvBtn(m.tv, true)}`;
   $('#sheet').classList.add('open');
 }
 $('#sheet').addEventListener('click', e => { if (e.target.id === 'sheet') $('#sheet').classList.remove('open'); });
 document.addEventListener('keydown', e => { if (e.key === 'Escape') $('#sheet').classList.remove('open'); });
-document.addEventListener('click', e => { const el = e.target.closest('[data-id]'); if (el) openSheet(el.dataset.id); });
+document.addEventListener('click', e => {
+  if (e.target.closest('a')) return;                       // TradingView links open on their own
+  if (e.target.id === 'moreWatch') { showAllWatch = true; renderLive(); return; }
+  const el = e.target.closest('[data-id]'); if (el) openSheet(el.dataset.id);
+});
+$('#q').addEventListener('input', e => { query = e.target.value; render(); });
+$('#more').addEventListener('click', () => { showAll = true; render(); });
 $('#seg').addEventListener('click', e => { const b = e.target.closest('button'); if (!b) return; filter = b.dataset.f; store.set('f1callsFilter', filter); render(); });
 
 async function load() {
@@ -389,7 +469,17 @@ async function load() {
       : null;
     if (!r || !r.ok) r = await fetch(SRC + (SRC.startsWith('http') ? '' : '?t=' + Date.now()), { cache: 'no-store' });
     if (!r.ok) throw new Error('HTTP ' + r.status);
-    data = await r.json();
+    const fresh = await r.json();
+    if (data) {
+      const before = new Set(data.calls.map(c => c.id + c.status));
+      for (const c of fresh.calls) {
+        if (before.has(c.id + c.status)) continue;
+        const f = x => fmt(x, c.dp);
+        if (c.status === 'active') notify(`🎯 A+ ${c.side > 0 ? 'BUY' : 'SELL'} ${c.name}`, `Entry ${f(c.entry)} · SL ${f(c.sl)} · TP ${f(c.tp)} · sentiment says ${c.verdict?.call}`, c.id);
+        else notify(`${c.status === 'tp' ? '✅' : c.status === 'sl' ? '❌' : '⏱'} ${c.name} ${c.status.toUpperCase()}`, `${c.r > 0 ? '+' : ''}${c.r}R`, c.id + c.status);
+      }
+    }
+    data = fresh;
     render();
   } catch (e) {
     if (!data) {
@@ -400,7 +490,125 @@ async function load() {
   }
 }
 $('#refresh').addEventListener('click', load);
+
+// ─── live prices ───
+// Crypto from Binance futures (CORS-open). Gold and FX from Dukascopy's chart
+// feed over JSONP — it only answers pages with a Referer, which a script tag sends.
+let jn = 0;
+function jsonp(url) {
+  return new Promise((ok, bad) => {
+    const cb = '_f1cb' + (++jn), el = document.createElement('script');
+    const done = () => { delete window[cb]; el.remove(); };
+    const t = setTimeout(() => { done(); bad(new Error('timeout')); }, 5000);
+    window[cb] = d => { clearTimeout(t); done(); ok(d); };
+    el.src = url + '&jsonp=' + cb; el.onerror = () => { clearTimeout(t); done(); bad(new Error('jsonp')); };
+    document.head.appendChild(el);
+  });
+}
+const setPx = (id, p) => { if (!(p > 0)) return; const o = px[id]; px[id] = { p, prev: o ? o.p : null, t: o && o.p === p ? o.t : Date.now() }; };
+async function dukaPx(m) {
+  const inst = m.id === 'XAUUSD' ? 'XAU/USD' : m.id.slice(0, 3) + '/' + m.id.slice(3);
+  const d = await jsonp('https://freeserv.dukascopy.com/2.0/index.php?path=chart%2Fjson3&instrument=' + encodeURIComponent(inst) +
+    `&offer_side=B&interval=1MIN&splits=true&stocks=true&limit=1&time_direction=P&timestamp=${Date.now()}`);
+  if (d && d[0]) setPx(m.id, d[0][4]);
+}
+let allTickAt = 0;
+async function binancePx(ids) {
+  if (!ids.length) return;
+  if (ids.length > 6) {
+    if (Date.now() - allTickAt < 2500) return;
+    allTickAt = Date.now();
+    const r = await fetch('https://fapi.binance.com/fapi/v1/ticker/price');
+    const known = new Set(data.markets.map(m => m.id));
+    for (const x of await r.json()) if (known.has(x.symbol)) setPx(x.symbol, +x.price);
+  } else await Promise.all(ids.map(async id => {
+    const r = await fetch('https://fapi.binance.com/fapi/v1/ticker/price?symbol=' + id);
+    setPx(id, +(await r.json()).price);
+  }));
+}
+async function refreshPx(ms) {
+  const want = ms.filter(m => m.open !== false);
+  await Promise.allSettled([
+    binancePx(want.filter(m => m.cls === 'crypto').map(m => m.id)),
+    ...want.filter(m => m.cls !== 'crypto').map(dukaPx)
+  ]);
+}
+const byId = id => data.markets.find(m => m.id === id);
+let busy1 = false, busy3 = false;
+setInterval(async () => {                                           // open calls: every second
+  if (!data || document.hidden || busy1) return;
+  const ms = data.calls.filter(c => c.status === 'active').map(c => byId(c.market)).filter(Boolean);
+  if (!ms.length) return;
+  busy1 = true;
+  try { await refreshPx(ms); checkCalls(); renderLive(); } finally { busy1 = false; }
+}, 1000);
+setInterval(async () => {                                           // zones + what's on screen: every 3 s
+  if (!data || document.hidden || busy3) return;
+  const zones = watchList().slice(0, showAllWatch ? 999 : 12);
+  const onScreen = [...document.querySelectorAll('[data-px]')].map(el => byId(el.dataset.px)).filter(Boolean);
+  const ms = [...new Set([...zones, ...onScreen.filter(m => m.cls !== 'crypto' || onScreen.length <= 60)])];
+  busy3 = true;
+  try { await refreshPx(ms); checkZones(zones); renderLive(); } finally { busy3 = false; }
+}, 3000);
+
+// ─── notifications ───
+const said = new Set(JSON.parse(sessionStorage.getItem('f1said') || '[]'));
+function notify(title, body, key) {
+  if (key && said.has(key)) return;
+  if (key) { said.add(key); try { sessionStorage.setItem('f1said', JSON.stringify([...said].slice(-300))); } catch {} }
+  const t = document.createElement('div');
+  t.innerHTML = `<b>${esc(title)}</b>${esc(body)}`;
+  const box = $('#toast'); box.appendChild(t); setTimeout(() => t.remove(), 9000);
+  while (box.children.length > 3) box.firstChild.remove();
+  try { navigator.vibrate?.([200, 100, 200]); } catch {}
+  if (store.get('f1callsAlerts', '0') === '1' && 'Notification' in window && Notification.permission === 'granted') {
+    const opts = { body, icon: 'icon.png', badge: 'icon.png', tag: key || title };
+    navigator.serviceWorker?.getRegistration().then(reg => reg ? reg.showNotification(title, opts) : new Notification(title, opts))
+      .catch(() => { try { new Notification(title, opts); } catch {} });
+  }
+}
+function checkCalls() {
+  for (const c of data.calls.filter(c => c.status === 'active')) {
+    const now = px[c.market]?.p; if (!now) continue;
+    if (c.side > 0 ? now >= c.tp : now <= c.tp) notify(`🎯 ${c.name} hit target`, `${fmt(now, c.dp)} — book it`, c.id + 'livetp');
+    else if (c.side > 0 ? now <= c.sl : now >= c.sl) notify(`${c.name} hit stop`, `${fmt(now, c.dp)}`, c.id + 'livesl');
+  }
+}
+// Zone alerts only when price moves INTO a zone (not for ones already inside
+// when the page opened), and only for gold, forex and the 50 busiest coins —
+// with ~500 coins anything wider is noise.
+const wasIn = {};
+let busiest = new Set();
+function checkZones(zones) {
+  if (!busiest.size) busiest = new Set(data.markets.filter(m => m.cls === 'crypto').sort((a, b) => (b.turnover || 0) - (a.turnover || 0)).slice(0, 50).map(m => m.id));
+  const slot = Math.floor(Date.now() / 900e3);
+  const fresh = [];
+  for (const m of zones) {
+    const inZone = zoneState(m).inZone, key = m.id + m.side;
+    if (inZone && wasIn[key] === false && (m.cls !== 'crypto' || busiest.has(m.id))) fresh.push(m);
+    wasIn[key] = inZone;
+  }
+  if (fresh.length === 1) { const m = fresh[0]; notify(`${m.name} entered the ${m.side > 0 ? 'BUY' : 'SELL'} zone`, `Watch for a strong 5m close — ${fmt(m.zone[0], m.dp)}–${fmt(m.zone[1], m.dp)}`, m.id + 'zone' + slot); }
+  else if (fresh.length > 1) notify(`${fresh.length} markets entered their A+ zone`, fresh.map(m => `${m.name} ${m.side > 0 ? 'BUY' : 'SELL'}`).join(' · '), 'zones' + fresh.map(m => m.id).join() + slot);
+}
+function alertsUi() {
+  const on = store.get('f1callsAlerts', '0') === '1' && 'Notification' in window && Notification.permission === 'granted';
+  $('#alertsBtn').textContent = on ? '🔔' : '🔕';
+  $('#alertsBtn').classList.toggle('on', on);
+}
+$('#alertsBtn').addEventListener('click', async () => {
+  if (!('Notification' in window)) return notify('Not supported here', 'This browser has no notifications — Telegram and the ntfy app still alert your phone.');
+  if (store.get('f1callsAlerts', '0') === '1') { store.set('f1callsAlerts', '0'); alertsUi(); return notify('Alerts off', 'This page will stop notifying this device.'); }
+  const p = await Notification.requestPermission();
+  store.set('f1callsAlerts', p === 'granted' ? '1' : '0'); alertsUi();
+  notify(p === 'granted' ? 'Alerts on' : 'Blocked', p === 'granted' ? 'New calls, zone entries, TP and SL will pop up while this page is open.' : 'Allow notifications for this site in the browser settings.');
+});
+alertsUi();
+
+// fetch the calls right after the cloud's post-close scan lands, and every 90 s besides
+function atClose() { const ms = 300e3 - Date.now() % 300e3 + 40e3; setTimeout(() => { load(); atClose(); }, ms); }
 load();
+atClose();
 setInterval(load, 90e3);
 setInterval(tickAge, 30e3);
 </script>

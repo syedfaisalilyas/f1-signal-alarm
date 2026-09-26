@@ -18,9 +18,15 @@
 //
 // Calls are tracked until TP, SL or 24 h, so the page can show a real win rate.
 //
+// Crypto = every USDT perpetual listed on BOTH MEXC and Binance (~500 coins).
+// Candles come from MEXC (Binance answers 451 to GitHub's US runners); the
+// Binance list is fetched live when it answers, else read from
+// cloud/binance-perps.json. Full sentiment is fetched only for the coins that
+// are lined up (and the majors), to keep a run inside a minute.
+//
 // Sources (no API keys): Dukascopy chart feed (spot gold + FX + US T-bond),
-// Gate.io futures (crypto candles, funding, positioning), CFTC Socrata (COT),
-// Nasdaq (GLD daily), ForexFactory calendar JSON.
+// MEXC contract API (crypto candles + board), Gate.io futures (funding,
+// positioning), CFTC Socrata (COT), Nasdaq (GLD daily), ForexFactory calendar.
 
 import fs from 'fs';
 import path from 'path';
@@ -40,18 +46,43 @@ const fx = (id, cot, inv, jpy = false) => ({
   min: pip(jpy ? 0.01 : 0.0001, 8), max: pip(jpy ? 0.01 : 0.0001, 30), buf: jpy ? 0.01 : 0.0001,
   news: [id.slice(0, 3), id.slice(3)], sess: [7, 17], cot, cotInv: inv, usdSide: id.startsWith('USD') ? 1 : -1
 });
-const coin = (id, dp, name) => ({
-  id, name, cls: 'crypto', src: 'gate', contract: `${id.replace('USDT', '')}_USDT`, dp,
-  minPct: 0.0015, maxPct: 0.012, news: ['USD']
-});
+const MAJORS = ['BTCUSDT', 'ETHUSDT', 'SOLUSDT', 'XRPUSDT', 'BNBUSDT', 'DOGEUSDT'];
+const NOT_CRYPTO = /^(XAU|XAG|XPT|XPD|PAXG|XAUT)/;
 export const MARKETS = [
   { id: 'XAUUSD', name: 'Gold', cls: 'gold', src: 'duka', inst: 'XAU/USD', dp: 2, min: 5, max: 15, buf: 0.5, news: ['USD'], cot: '088691', usdSide: -1 },
   fx('EURUSD', '099741', false), fx('GBPUSD', '096742', false), fx('AUDUSD', '232741', false),
   fx('NZDUSD', '112741', false), fx('USDJPY', '097741', true, true), fx('USDCAD', '090741', true),
-  fx('USDCHF', '092741', true),
-  coin('BTCUSDT', 1, 'Bitcoin'), coin('ETHUSDT', 2, 'Ethereum'), coin('SOLUSDT', 3, 'Solana'),
-  coin('XRPUSDT', 4, 'XRP'), coin('BNBUSDT', 2, 'BNB'), coin('DOGEUSDT', 5, 'Dogecoin')
-];
+  fx('USDCHF', '092741', true)
+].map(m => ({ ...m, tv: `OANDA:${m.id}` }));
+
+// Every USDT perp on both exchanges, biggest 24h turnover first.
+async function cryptoUniverse() {
+  let binance;
+  try {
+    const info = await get('https://fapi.binance.com/fapi/v1/exchangeInfo', { ms: 10000 });
+    binance = info.symbols.filter(x => x.contractType === 'PERPETUAL' && x.status === 'TRADING' && x.quoteAsset === 'USDT').map(x => x.symbol);
+    fs.writeFileSync(path.join(DIR, 'binance-perps.json'), JSON.stringify({ updated: new Date().toISOString().slice(0, 10), symbols: binance.sort() }));
+  } catch {
+    binance = JSON.parse(fs.readFileSync(path.join(DIR, 'binance-perps.json'), 'utf8')).symbols;
+  }
+  const bset = new Set(binance);
+  const [detail, tickers] = await Promise.all([
+    get('https://contract.mexc.com/api/v1/contract/detail'),
+    get('https://contract.mexc.com/api/v1/contract/ticker')
+  ]);
+  const turnover = Object.fromEntries((tickers.data || []).map(t => [t.symbol, +t.amount24 || 0]));
+  return detail.data
+    .filter(x => x.quoteCoin === 'USDT' && x.state === 0 && bset.has(x.symbol.replace('_', '')) && !NOT_CRYPTO.test(x.baseCoin))
+    .map(x => {
+      const id = x.symbol.replace('_', ''), dp = Math.max(0, Math.round(-Math.log10(+x.priceUnit || 0.01)));
+      return {
+        id, name: x.baseCoin, cls: 'crypto', src: 'mexc', msym: x.symbol, contract: x.symbol, dp,
+        minPct: 0.0015, maxPct: 0.012, news: ['USD'], tv: `BINANCE:${id}.P`,
+        turnover: turnover[x.symbol] || 0, major: MAJORS.includes(id)
+      };
+    })
+    .sort((a, b) => b.major - a.major || b.turnover - a.turnover);
+}
 
 // ─── fetch helpers ───
 async function get(url, { text = false, headers = {}, ms = 20000 } = {}) {
@@ -79,15 +110,42 @@ async function dukaBars(inst, tf, limit) {
   return closed(rows.map(r => ({ t: r[0] / 1000, o: r[1], h: r[2], l: r[3], c: r[4], v: r[5] })), tf);
 }
 
-async function gateBars(contract, tf, limit) {
-  const rows = await get(`https://api.gateio.ws/api/v4/futures/usdt/candlesticks?contract=${contract}&interval=${tf}&limit=${limit}`);
-  return closed(rows.map(r => ({ t: +r.t, o: +r.o, h: +r.h, l: +r.l, c: +r.c, v: +r.v })), tf);
-}
-
 // oldest first, unfinished bar dropped
 function closed(bars, tf) {
   const now = Date.now() / 1000;
   return bars.sort((a, b) => a.t - b.t).filter(b => b.t + PER[tf] <= now + 5);
+}
+
+// One request per coin: 1000 5m bars, rolled up into 15m and 1h locally.
+// MEXC allows ~20 requests / 2 s and answers "too frequent" with HTTP 200 and
+// success:false, so requests are spaced and that reply is retried.
+let mexcNext = 0;
+async function mexcGet(url) {
+  for (let t = 0; t < 5; t++) {
+    const wait = Math.max(0, mexcNext - Date.now());
+    mexcNext = Math.max(Date.now(), mexcNext) + 110;
+    if (wait) await new Promise(z => setTimeout(z, wait));
+    const j = await get(url);
+    if (j?.success !== false) return j;
+    await new Promise(z => setTimeout(z, 1000 * (t + 1)));
+  }
+  throw new Error('mexc: too frequent');
+}
+async function mexcBars(sym) {
+  const d = (await mexcGet(`https://contract.mexc.com/api/v1/contract/kline/${sym}?interval=Min5&start=${Math.floor(Date.now() / 1000) - 1000 * 300}`)).data;
+  if (!d?.time?.length) return [];
+  return closed(d.time.map((t, i) => ({ t, o: +d.open[i], h: +d.high[i], l: +d.low[i], c: +d.close[i], v: +d.vol[i] })), '5m');
+}
+function rollup(m5, sec) {
+  const out = [];
+  for (const b of m5) {
+    const t = b.t - b.t % sec, last = out.at(-1);
+    if (last && last.t === t) { last.h = Math.max(last.h, b.h); last.l = Math.min(last.l, b.l); last.c = b.c; last.v += b.v; last.n++; }
+    else out.push({ t, o: b.o, h: b.h, l: b.l, c: b.c, v: b.v, n: 1 });
+  }
+  const full = sec / 300;                                    // drop a half-built last bucket
+  if (out.length && out.at(-1).n < full) out.pop();
+  return out;
 }
 
 async function barsFor(m) {
@@ -95,8 +153,18 @@ async function barsFor(m) {
     const [m5, m15, h1] = await Promise.all([dukaBars(m.inst, '5m', 600), dukaBars(m.inst, '15m', 300), dukaBars(m.inst, '1h', 300)]);
     return { m5, m15, h1 };
   }
-  const [m5, m15, h1] = await Promise.all([gateBars(m.contract, '5m', 600), gateBars(m.contract, '15m', 300), gateBars(m.contract, '1h', 300)]);
-  return { m5, m15, h1 };
+  const m5 = await mexcBars(m.msym);
+  return { m5, m15: rollup(m5, 900), h1: rollup(m5, 3600) };
+}
+
+// run fn over items, n at a time
+async function pool(items, n, fn) {
+  const out = new Array(items.length);
+  let next = 0;
+  await Promise.all(Array.from({ length: n }, async () => {
+    while (next < items.length) { const k = next++; out[k] = await fn(items[k], k); }
+  }));
+  return out;
 }
 
 // ─── indicators (same as tools/mt5/gold-aplus.mjs) ───
@@ -339,7 +407,22 @@ function settle(call, m5) {
   return null;
 }
 
+// gold, forex and the 50 most-traded coins ping Telegram; the rest stay on the page
+let topCoins = new Set();
+const alertable = m => m.cls !== 'crypto' || topCoins.has(m.id);
+
+// Telegram + the ntfy phone app (same topic the MT5 A+ watcher used)
 async function telegram(text) {
+  const topic = process.env.NTFY_TOPIC;
+  if (topic) {
+    const plain = text.replace(/<[^>]+>/g, ''), [title, ...rest] = plain.split('\n');
+    const link = (plain.match(/https:\/\/www\.tradingview\.com\S+/) || [])[0];
+    fetch(`https://ntfy.sh/${topic}`, {
+      method: 'POST', body: rest.filter(l => !l.startsWith('https://')).join('\n') || title,
+      headers: { Title: title.replace(/[^\x20-\x7E]/g, '').trim() || 'F1 call', Priority: /🎯/.test(title) ? 'high' : 'default',
+                 Tags: /🎯/.test(title) ? 'dart' : /✅/.test(title) ? 'white_check_mark' : 'x', ...(link ? { Click: link } : {}) }
+    }).catch(() => {});
+  }
   const t = process.env.TELEGRAM_TOKEN, chat = process.env.TELEGRAM_CHAT_ID;
   if (!t || !chat) return;
   try {
@@ -357,23 +440,40 @@ async function main() {
   const errors = [];
   const soft = (name, p) => p.catch(e => { errors.push(`${name}: ${e.message}`); return null; });
 
-  const cryptoIds = MARKETS.filter(m => m.cls === 'crypto');
-  const [cotData, gld, dxy, bnd, cal, ...flows] = await Promise.all([
+  const [coins, cotData, gld, dxy, bnd, cal] = await Promise.all([
+    soft('crypto list', cryptoUniverse()),
     soft('cot', cot(MARKETS.filter(m => m.cot).map(m => m.cot))),
-    soft('gld', gldFlow()), soft('dollar', dollar()), soft('bonds', bonds()), soft('calendar', calendar()),
-    ...cryptoIds.map(m => soft(`flow ${m.id}`, cryptoFlow(m.contract)))
+    soft('gld', gldFlow()), soft('dollar', dollar()), soft('bonds', bonds()), soft('calendar', calendar())
   ]);
-  const ctx = { cot: cotData, gld, dxy, bonds: bnd, cal, flow: Object.fromEntries(cryptoIds.map((m, j) => [m.id, flows[j]])) };
+  const all = [...MARKETS, ...(coins || [])];
+  topCoins = new Set((coins || []).slice().sort((a, b) => b.turnover - a.turnover).slice(0, 50).map(c => c.id));
+  const ctx = { cot: cotData, gld, dxy, bonds: bnd, cal, flow: {} };
+
+  // pass 1: candles + the A+ zone for everything
+  let dropped = 0;
+  const scanned = (await pool(all, 8, async m => {
+    try {
+      const bars = await barsFor(m);
+      if (bars.m5.length < 260 || bars.h1.length < 60) return null;
+      const newsNear = (cal || []).find(e => (m.news || []).includes(e.country) && Math.abs(new Date(e.date) - Date.now()) < 20 * 60e3);
+      return { m, bars, z: aplus(m, bars, newsNear) };
+    } catch (e) {
+      if (m.cls !== 'crypto' || m.major) errors.push(`${m.id} bars: ${e.message}`);
+      else dropped++;
+      return null;
+    }
+  })).filter(Boolean);
+
+  // pass 2: positioning only where it matters — majors, lined-up coins, open calls
+  if (dropped > 20) errors.push(`${dropped} coins had no candles this scan`);
+  const wanted = scanned.filter(({ m, z }) => m.cls === 'crypto' &&
+    (m.major || z.status !== 'none' || calls.some(c => c.market === m.id && c.status === 'active')));
+  await pool(wanted, 6, async ({ m }) => { ctx.flow[m.id] = await cryptoFlow(m.contract).catch(() => null); });
 
   const markets = [];
-  for (const m of MARKETS) {
-    let bars;
-    try { bars = await barsFor(m); } catch (e) { errors.push(`${m.id} bars: ${e.message}`); continue; }
-    if (bars.m5.length < 260 || bars.h1.length < 60) { errors.push(`${m.id}: not enough bars`); continue; }
-
-    const newsNear = (cal || []).find(e => (m.news || []).includes(e.country) && Math.abs(new Date(e.date) - Date.now()) < 20 * 60e3);
-    const z = aplus(m, bars, newsNear);
-    const checks = checksFor(m, ctx);
+  for (const { m, bars, z } of scanned) {
+    const deep = m.cls !== 'crypto' || !!ctx.flow[m.id];
+    const checks = deep ? checksFor(m, ctx) : [];
     const leanSum = checks.reduce((s, c) => s + c.lean, 0);
 
     // settle open calls on this market
@@ -381,7 +481,7 @@ async function main() {
       const done = settle(c, bars.m5);
       if (done) {
         Object.assign(c, done);
-        await telegram(`${done.status === 'tp' ? '✅' : done.status === 'sl' ? '❌' : '⏱'} <b>${m.name || m.id} ${c.side > 0 ? 'BUY' : 'SELL'}</b> closed: ${done.status.toUpperCase()} (${done.r > 0 ? '+' : ''}${done.r}R)`);
+        if (alertable(m)) await telegram(`${done.status === 'tp' ? '✅' : done.status === 'sl' ? '❌' : '⏱'} <b>${m.name || m.id} ${c.side > 0 ? 'BUY' : 'SELL'}</b> closed: ${done.status.toUpperCase()} (${done.r > 0 ? '+' : ''}${done.r}R)`);
       }
     }
 
@@ -390,25 +490,29 @@ async function main() {
         !calls.some(c => c.market === m.id && c.barT === z.barT)) {
       const v = verdict(z.side, checks);
       const call = {
-        id: `${m.id}-${z.barT}`, market: m.id, name: m.name || m.id, cls: m.cls, dp: m.dp, side: z.side, grade: 'A+',
+        id: `${m.id}-${z.barT}`, market: m.id, name: m.name || m.id, cls: m.cls, dp: m.dp, tv: m.tv, side: z.side, grade: 'A+',
         entry: z.entry, sl: z.sl, tp: z.tp, rr: RR, zone: z.zone, barT: z.barT, openedAt: Date.now(),
         status: 'active', checks, verdict: v
       };
       calls.push(call);
       const f = x => x.toFixed(m.dp);
-      await telegram(`🎯 <b>${call.name} ${z.side > 0 ? 'BUY' : 'SELL'} A+</b>\nEntry ${f(z.entry)}  SL ${f(z.sl)}  TP ${f(z.tp)} (1:${RR})\n` +
-        `Sentiment: ${v.agree} agree / ${v.oppose} oppose → <b>${v.call}</b>\n` +
-        checks.filter(c => c.lean).map(c => `${c.lean === z.side ? '✅' : '⚠️'} ${c.label}`).join('\n'));
+      if (alertable(m))
+        await telegram(`🎯 <b>${call.name} ${z.side > 0 ? 'BUY' : 'SELL'} A+</b>\nEntry ${f(z.entry)}  SL ${f(z.sl)}  TP ${f(z.tp)} (1:${RR})\n` +
+          `Sentiment: ${v.agree} agree / ${v.oppose} oppose → <b>${v.call}</b>\n` +
+          checks.filter(c => c.lean).map(c => `${c.lean === z.side ? '✅' : '⚠️'} ${c.label}`).join('\n') +
+          `\nhttps://www.tradingview.com/chart/?symbol=${encodeURIComponent(m.tv)}&interval=5`);
     }
 
     const live = calls.find(c => c.market === m.id && c.status === 'active');
     if (live) live.price = z.price;
+    const sig = x => +x.toPrecision(6);
     markets.push({
-      id: m.id, name: m.name || m.id, cls: m.cls, dp: m.dp, price: z.price,
-      chg24: bars.h1.length > 24 ? z.price / bars.h1.at(-25).c - 1 : 0,
-      spark: bars.h1.slice(-48).map(b => b.c),
-      trend: z.trend, status: z.status, side: z.side, zone: z.zone, blockers: z.blockers || [],
-      open: z.fresh, checks, lean: Math.sign(leanSum), leanScore: leanSum
+      id: m.id, name: m.name || m.id, cls: m.cls, dp: m.dp, tv: m.tv, price: z.price, major: !!m.major,
+      turnover: m.turnover ? Math.round(m.turnover) : undefined,
+      chg24: bars.h1.length > 24 ? +(z.price / bars.h1.at(-25).c - 1).toFixed(5) : 0,
+      spark: bars.h1.slice(-48).filter((_, j, a) => deep || j % 2 === 0 || j === a.length - 1).map(b => sig(b.c)),
+      trend: z.trend, status: z.status, side: z.side, zone: z.zone && z.zone.map(sig), blockers: z.blockers || [],
+      open: z.fresh, checks, deep, lean: Math.sign(leanSum), leanScore: leanSum
     });
   }
 
@@ -417,9 +521,9 @@ async function main() {
   const doc = { updatedAt: Date.now(), rr: RR, markets, calls: keep, errors, cotDate: Object.values(cotData || {})[0]?.date || null };
   fs.mkdirSync(DIR, { recursive: true });
   fs.writeFileSync(OUT, JSON.stringify(doc));
-  console.log(`calls: ${markets.length}/${MARKETS.length} markets, ${keep.filter(c => c.status === 'active').length} active, ${keep.length} kept` +
+  console.log(`calls: ${markets.length}/${all.length} markets, ${Object.values(ctx.flow).filter(Boolean).length} with crypto positioning, ${keep.filter(c => c.status === 'active').length} active, ${keep.length} kept` +
     (errors.length ? `\n  errors: ${errors.join(' | ')}` : ''));
-  for (const mk of markets)
+  for (const mk of markets.filter(x => x.cls !== 'crypto' || x.major || x.status === 'ready' || x.status === 'watching'))
     console.log(`  ${mk.id.padEnd(8)} ${String(mk.price).padEnd(10)} ${mk.status.padEnd(9)} H1 ${mk.trend.h1} M15 ${mk.trend.m15} M5 ${mk.trend.m5}  lean ${mk.leanScore}  ${mk.blockers[0] || ''}`);
 }
 
