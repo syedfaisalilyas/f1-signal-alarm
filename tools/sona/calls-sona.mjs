@@ -7,13 +7,9 @@
 //   stop = a 30m CLOSE beyond the SL (plus a hard disaster stop 2R out);
 //   TP1 → book half, stop to entry; TP2 → close the rest;
 //   an order that doesn't fill in 48 h expires; a new zone replaces an unfilled one.
-import { readFileSync } from 'node:fs';
+// Results are kept in R and as PnL % at the coin's MEXC max leverage
+// (move % × max leverage — the ROI a MEXC card would show).
 import { setup, btcRegime, COINS, CFG } from './zones.mjs';
-
-// History so the tab isn't empty on day one: the strategy's last 90 days
-// replayed (sonabot.mjs --backtest writes it) and 44 of her own calls checked
-// on real prices. Live trades are added on top as they close.
-const BACKFILL = (() => { try { return JSON.parse(readFileSync(new URL('./backfill.json', import.meta.url), 'utf8')); } catch { return null; } })();
 
 const TTL = 48 * 3600;              // seconds an unfilled setup waits
 const KEEP = 90 * 86400e3;          // closed history kept
@@ -64,7 +60,7 @@ function track(c, m5) {
     if (b.t <= c.lastT) continue;
     c.lastT = b.t;
     if (c.status === 'waiting') {
-      if (b.t > c.createdAt / 1000 + TTL) { close(c, 'expired', 0, b.t); return; }
+      if (b.t > c.createdAt / 1000 + TTL) { close(c, 'expired', 0, 0, b.t); return; }
       if (L ? b.l <= c.e1 : b.h >= c.e1) {
         c.legs = [c.e1]; c.status = 'open'; c.filledAt = b.t * 1000;
         if (L ? b.l <= c.e2 : b.h >= c.e2) c.legs.push(c.e2);
@@ -75,19 +71,22 @@ function track(c, m5) {
     const avg = c.legs.reduce((s, x) => s + x, 0) / c.legs.length, R = Math.abs(avg - c.sl);
     const rAt = p => (p - avg) * dir(c) / R;
     const hard = c.sl - dir(c) * R;
-    if (c.status === 'open' && (L ? b.l <= hard : b.h >= hard)) { close(c, 'sl', c.booked + (1 - c.part) * rAt(hard), b.t); return; }
-    if (c.status === 'half' && (L ? b.l <= c.beAt : b.h >= c.beAt)) { close(c, 'be', c.booked, b.t); return; }
+    const mv = p => (p - avg) / avg * dir(c) * 100;          // price move %
+    const out = (status, p) => close(c, status, c.booked + (1 - c.part) * rAt(p), (c.bookedPct || 0) + (1 - c.part) * mv(p), b.t);
+    if (c.status === 'open' && (L ? b.l <= hard : b.h >= hard)) { out('sl', hard); return; }
+    if (c.status === 'half' && (L ? b.l <= c.beAt : b.h >= c.beAt)) { out('be', c.beAt); return; }
     if (c.status === 'open' && (L ? b.h >= c.tp1 : b.l <= c.tp1)) {
-      c.booked += 0.5 * rAt(c.tp1); c.part = 0.5; c.status = 'half'; c.beAt = avg; c.avg = avg;
+      c.booked += 0.5 * rAt(c.tp1); c.bookedPct = 0.5 * mv(c.tp1); c.part = 0.5; c.status = 'half'; c.beAt = avg; c.avg = avg;
     }
-    if (c.status === 'half' && (L ? b.h >= c.tp2 : b.l <= c.tp2)) { close(c, 'tp', c.booked + 0.5 * rAt(c.tp2), b.t); return; }
+    if (c.status === 'half' && (L ? b.h >= c.tp2 : b.l <= c.tp2)) { out('tp', c.tp2); return; }
     const barEnd = b.t + 300;
-    if (c.status === 'open' && barEnd % 1800 === 0 && (L ? b.c < c.sl : b.c > c.sl)) { close(c, 'sl', rAt(b.c), b.t); return; }
+    if (c.status === 'open' && barEnd % 1800 === 0 && (L ? b.c < c.sl : b.c > c.sl)) { out('sl', b.c); return; }
     c.avg = avg;
   }
 }
-function close(c, status, r, t) {
-  c.status = status; c.r = +r.toFixed(2); c.closedAt = t * 1000;
+function close(c, status, r, move, t) {
+  c.status = status; c.r = +r.toFixed(2); c.move = +move.toFixed(3); c.closedAt = t * 1000;
+  if (c.lev) c.roi = +(move * c.lev).toFixed(1);
 }
 
 // prev: last doc.sona · markets: [{id, name, tv, dp}] · b4: id → 4H bars · m5: id → 5m bars · price: id → last
@@ -102,7 +101,7 @@ export function sonaPass({ prev, markets, b4, m5, price, btc4 }) {
     if (!k4 || k4.length < 100 || !(px > 0)) continue;
     const s = setup(k4.slice(-400), px, regime);
     const live = calls.find(c => c.market === m.id && ['waiting', 'open', 'half'].includes(c.status));
-    if (live) { live.price = px; if (live.status !== 'waiting' || !s) continue; }
+    if (live) { live.price = px; live.lev = m.maxLev || live.lev; if (live.status !== 'waiting' || !s) continue; }
     if (!s) continue;
     // an unfilled setup whose zone changed is replaced by the new one
     if (live) {
@@ -111,7 +110,7 @@ export function sonaPass({ prev, markets, b4, m5, price, btc4 }) {
     }
     const nowT = Math.floor(Date.now() / 1000);
     calls.push({
-      id: `${m.id}-sona-${s.side}-${sig(s.zone.lo)}-${nowT}`, market: m.id, coin: m.id.replace(/USDT$/, ''), name: m.name || m.id, tv: m.tv, dp: m.dp,
+      id: `${m.id}-sona-${s.side}-${sig(s.zone.lo)}-${nowT}`, market: m.id, coin: m.id.replace(/USDT$/, ''), name: m.name || m.id, tv: m.tv, dp: m.dp, lev: m.maxLev || null,
       side: s.side === 'L' ? 1 : -1, e1: sig(s.e1), e2: sig(s.e2), sl: sig(s.sl), tp1: sig(s.tps[0]), tp2: sig(s.tps[1]),
       zone: { lo: sig(s.zone.lo), hi: sig(s.zone.hi), touch: s.zone.touch },
       why: why(m.id, s, px, regime, btcRange), price: px, status: 'waiting', createdAt: Date.now(),
@@ -120,7 +119,7 @@ export function sonaPass({ prev, markets, b4, m5, price, btc4 }) {
   }
   const shown = calls.filter(c => c.status !== 'replaced');
   return {
-    updatedAt: Date.now(), regime, btcRange: btcRange.map(sig), coins: COINS, bt: SONA_BT, backfill: BACKFILL,
+    updatedAt: Date.now(), regime, btcRange: btcRange.map(sig), coins: COINS, bt: SONA_BT,
     calls: shown.filter(c => c.status !== 'expired' || Date.now() - c.closedAt < 7 * 86400e3)
   };
 }

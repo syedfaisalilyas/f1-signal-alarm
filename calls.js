@@ -87,7 +87,7 @@ async function cryptoUniverse() {
       return {
         id, name: x.baseCoin, cls: 'crypto', src: 'mexc', msym: x.symbol, contract: x.symbol, dp,
         minPct: 0.0015, maxPct: 0.012, news: ['USD'], tv: `BINANCE:${id}.P`,
-        turnover: turnover[x.symbol] || 0, major: MAJORS.includes(id)
+        turnover: turnover[x.symbol] || 0, major: MAJORS.includes(id), maxLev: +x.maxLeverage || null
       };
     })
     .sort((a, b) => b.major - a.major || b.turnover - a.turnover);
