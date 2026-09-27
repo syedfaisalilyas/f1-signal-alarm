@@ -246,6 +246,12 @@ footer{margin-top:36px;color:var(--faint);font-size:12px;text-align:center;line-
 .skel{height:120px;border-radius:22px;background:linear-gradient(90deg,var(--card),var(--card2),var(--card));background-size:200% 100%;animation:sh 1.2s infinite}
 @keyframes sh{to{background-position:-200% 0}}
 /* 🟣 Sona tab */
+.quote{margin-top:10px;padding:10px 12px;border-left:3px solid #d8a4ff;border-radius:8px;background:rgba(216,164,255,.06);font-size:13px;font-style:italic;color:var(--fg);white-space:pre-line}
+.quote small{display:block;margin-top:6px;font-style:normal;color:var(--faint);font-size:11.5px} .quote a{color:#d8a4ff}
+.agree{margin-top:10px;padding:8px 11px;border-radius:10px;font-size:12.5px;border:1px solid var(--line)}
+.agree.yes{color:var(--up);border-color:rgba(47,227,163,.35);background:rgba(47,227,163,.06)}
+.agree.no{color:#ffd28a;border-color:rgba(255,181,71,.35);background:rgba(255,181,71,.06)}
+.agree.none{color:var(--dim)}
 body.sona .std, body.sona [data-std], body.sona #more{display:none!important}
 #sonaView{display:none} body.sona #sonaView{display:block}
 .sona-intro{margin-top:14px;padding:14px 16px;border-radius:18px;background:rgba(216,164,255,.07);border:1px solid rgba(216,164,255,.28);font-size:13px;color:var(--dim);line-height:1.55}
@@ -479,7 +485,7 @@ function render() {
     $('#c-' + f).textContent = n ? `${n} live` : data.markets.filter(m => f === 'all' || m.cls === f).length;
   }
   const sonaLive = (data.sona?.calls || []).filter(c => SONA_LIVE.includes(c.status));
-  $('#c-sona').textContent = sonaLive.length || (data.sona ? 0 : '–');
+  $('#c-sona').textContent = (sonaLive.length + herLive().length) || (data.sona ? 0 : '–');
   document.body.classList.toggle('sona', filter === 'sona');
   if (filter === 'sona') { renderSona(); tickAge(); return; }
 
@@ -521,6 +527,60 @@ function render() {
 
 // ─── 🟣 Sona: her zone method as rules (tools/sona/calls-sona.mjs) ───
 const SONA_LIVE = ['waiting', 'open', 'half'];
+// Her channel trades, copied by copysona on the Mac and pushed to the sona-live branch
+let her = null;
+async function loadHer() {
+  const api = 'https://api.github.com/repos/syedfaisalilyas/f1-signal-alarm/contents/copysona.json?ref=sona-live';
+  const raw = 'https://raw.githubusercontent.com/syedfaisalilyas/f1-signal-alarm/sona-live/copysona.json';
+  try {
+    let r = SRC.startsWith('http') ? await fetch(api, { cache: 'no-store', headers: { Accept: 'application/vnd.github.raw+json' } }).catch(() => null)
+      : await fetch('../cloud/copysona.json?t=' + Date.now()).catch(() => null);   // ?src=local preview
+    if (!r || !r.ok) r = await fetch(raw, { cache: 'no-store' });
+    if (r.ok) { her = await r.json(); if (filter === 'sona') render(); }
+  } catch {}
+}
+const herLive = () => (her?.open || []);
+const stratFor = (coin, side) => (data.sona?.calls || []).find(c => c.coin === coin && SONA_LIVE.includes(c.status) && (side == null || c.side === side));
+function agreeBadge(coin, side) {
+  const same = stratFor(coin, side), other = stratFor(coin, -side);
+  if (same) return `<div class="agree yes">✅ My strategy agrees — it also has a ${side > 0 ? 'BUY' : 'SELL'} on ${esc(coin)} (zone ${fmt(same.zone.lo, same.dp)}–${fmt(same.zone.hi, same.dp)}, reacted ${same.zone.touch}×)</div>`;
+  if (other) return `<div class="agree no">⚠️ My strategy says the opposite — ${other.side > 0 ? 'BUY' : 'SELL'} on ${esc(coin)}</div>`;
+  return `<div class="agree none">➖ My strategy has no setup on ${esc(coin)} right now — this one is her own judgement</div>`;
+}
+function herCard(t) {
+  const L = t.side > 0, m = data.markets.find(x => x.id === t.coin + 'USDT'), dp = m?.dp ?? 4;
+  const now = livePx(t.coin + 'USDT', m?.price), filled = t.entries.filter(e => e.filled);
+  const pnl = t.avg && now ? (now - t.avg) * t.side / t.avg * 100 : null;
+  const st = t.status === 'pending' ? `<span class="sst waiting">⏳ Orders waiting — ${t.entries.map(e => fmt(e.px, dp)).join(' / ')}</span>`
+    : t.bookedHalf ? `<span class="sst half">✅ Half booked — stop at entry ${fmt(t.sl, dp)}</span>`
+    : `<span class="sst open">🟢 In trade @ ${fmt(t.avg, dp)}${pnl != null ? ` · <span class="${pnl >= 0 ? 'up' : 'down'}">${pnl >= 0 ? '+' : ''}${pnl.toFixed(2)}% price move</span>` : ''}</span>`;
+  return `<article class="call ${L ? 'buy' : 'sell'}">
+    <div class="row"><span class="side">${L ? 'BUY' : 'SELL'}</span><span class="mkt">${esc(t.coin)}</span><span class="chip crypto">📡 Her trade</span>
+      <span style="margin-left:auto" class="row">${m ? `<span class="px num ${pxCls(m.id)}" data-px="${m.id}">${fmt(now, dp)}</span>` : ''}${tvBtn(m?.tv || `BINANCE:${t.coin}USDT.P`)}</span></div>
+    ${st}
+    ${t.quote ? `<div class="quote">“${esc(t.quote)}”<small>${t.post ? `<a href="https://t.me/sonaabeyg/${t.post}" target="_blank" rel="noopener">her post #${t.post}</a> · ` : ''}${when(t.createdAt)}</small></div>` : ''}
+    <div class="lv lv5 num">
+      ${t.entries.map((e, i) => `<div><small>Entry ${i + 1}${e.filled ? ' ✓' : ''}</small><b>${e.market && !e.filled ? 'market' : fmt(e.px, dp)}</b></div>`).join('')}
+      <div class="sl"><small>SL${t.slHard ? ' · hard' : ' · 30m close'}</small><b>${fmt(t.sl, dp)}${t.slTemp ? ' *' : ''}</b></div>
+      ${t.tps.map((x, i) => `<div class="tp"><small>TP${i + 1}</small><b>${fmt(x, dp)}</b></div>`).join('')}
+    </div>
+    ${t.slTemp ? '<div class="fnote" style="margin:6px 0 0">* temporary stop — she said "SL will update"; it changes when she posts it</div>' : ''}
+    ${agreeBadge(t.coin, t.side)}
+    <div class="swhy"><h4>What she said → what the bot did</h4>${esc(t.note)}<br><span style="color:var(--faint)">Paper, ${esc(her.sizing)}</span></div>
+  </article>`;
+}
+function renderHer() {
+  if (!her) return `<div class="empty"><b>Her channel trades aren't published yet</b>copysona runs on your laptop and pushes here when it's on.</div>`;
+  const age = Date.now() - (her.updatedAt || 0), off = age > 20 * 60e3;
+  const closed = her.closed || [], wins = closed.filter(t => t.pnl > 0).length;
+  const net = closed.reduce((s, t) => s + t.pnl, 0);
+  return `<div class="fnote" style="margin:4px 0 10px">${off ? '🔴 copysona is offline (laptop off or asleep) — last seen ' + ago(her.updatedAt) : '🟢 copysona watching her channel · checked ' + ago(her.updatedAt)}${her.asking ? ` · ❓ ${her.asking} question${her.asking > 1 ? 's' : ''} waiting for you on Telegram` : ''} · paper ${fmt(her.equity, 2)} USDT (start ${her.start})${closed.length ? ` · closed ${closed.length}, ${wins} won, ${net >= 0 ? '+' : ''}${net.toFixed(2)} USDT` : ''}</div>
+    ${herLive().length ? `<div class="calls">${herLive().map(herCard).join('')}</div>` : `<div class="empty"><b>No open trade from her right now</b>When she posts a trade on her channel it shows up here within a minute or two, with her words and whether my strategy agrees.</div>`}
+    ${closed.length ? `<h2>Her closed trades · 90 days</h2><div class="hist">${closed.map(t => `
+      <div class="h"><span class="res ${t.pnl > 0 ? 'tp' : t.pnl < 0 ? 'sl' : 'be'}">${t.pnl > 0 ? 'Won' : t.pnl < 0 ? 'Lost' : 'Even'}</span>
+        <span><b>${esc(t.coin)}</b> <span class="${t.side > 0 ? 'up' : 'down'}">${t.side > 0 ? 'BUY' : 'SELL'}</span> <small class="num">@ ${fmt(t.avg, 4)}</small><br><small>${when(t.createdAt)} · ${esc(t.exitWhy || '')}</small></span>
+        <span class="num ${t.pnl > 0 ? 'up' : t.pnl < 0 ? 'down' : ''}" style="font-weight:700">${t.pnl > 0 ? '+' : ''}${t.pnl} USDT</span><span></span></div>`).join('')}</div>` : ''}`;
+}
 const SONA_ST = { tp: '🎯 TP2', be: '➖ Stop at entry', sl: '❌ SL', expired: '⌛ Never filled' };
 const day = t => new Date(t * 1000).toLocaleDateString([], { day: 'numeric', month: 'short' });
 function sonaCard(c) {
@@ -539,6 +599,7 @@ function sonaCard(c) {
     <div class="row"><span class="side">${L ? 'BUY' : 'SELL'}</span><span class="mkt">${esc(c.coin)}</span><span class="chip crypto">Sona zone</span>
       <span style="margin-left:auto" class="row"><span class="px num ${pxCls(c.market)}" data-px="${c.market}">${fmt(now, dp)}</span>${px[c.market] ? '<span class="livetag"><i></i>LIVE</span>' : ''}${tvBtn(c.tv)}</span></div>
     ${st}
+    ${herLive().some(t => t.coin === c.coin && t.side === c.side) ? `<div class="agree yes">📡 Sona posted this trade too on her channel</div>` : ''}
     <div class="ladder" style="--e:${pos(c.e1)}%">
       <div class="bar"></div>
       <span class="tick" style="left:${pos(c.sl)}%">SL</span>
@@ -574,13 +635,15 @@ function renderSona() {
   $('#sonaView').innerHTML = `
     <div class="sona-intro"><b>Sona's strategy, run as rules.</b> Horizontal demand/supply zones on the 4H chart that price reacted to at least twice · two entries (top and bottom of the zone) · SL only on a 30-min candle close · half booked at +1R with the stop to entry · the rest to the next zone. Her ${S.coins.length} coins: ${esc(S.coins.join(', '))}. BTC leads: right now its daily close is in the <b>${S.regime > 0 ? 'top half' : S.regime < 0 ? 'bottom half' : '—'}</b> of its 20-day range, so <b>${S.regime > 0 ? 'only BUYs' : S.regime < 0 ? 'only SELLs' : 'nothing'}</b>.
       <span class="warn">⚠️ Tested over ${esc(bt.period)} on ${bt.coins} coins: ${bt.trades} trades, ${bt.tp1}% reached TP1, but <b>${bt.avgR}R per trade overall — it loses slightly</b>. Her own posted calls did better (+${bt.her.avgR}R over ${bt.her.n} calls) because she picks which zones to trust. Watch these on paper; don't size up.</span></div>
-    <section class="stats" style="margin-top:14px">
+    <h2>📡 Her trades from the channel</h2>
+    ${renderHer()}
+    <h2>My strategy's setups (her rules)</h2>
+    <section class="stats" style="margin-bottom:14px">
       <div class="stat"><small>Reached TP1</small><b class="num">${closed.length ? Math.round(tp1 / closed.length * 100) + '%' : '–'}</b><em>backtest ${bt.tp1}%</em></div>
       <div class="stat"><small>Overall result</small><b class="num ${net >= 0 ? 'up' : 'down'}">${closed.length ? (net >= 0 ? '+' : '') + net.toFixed(1) + 'R' : '–'}</b><em>closed Sona trades</em></div>
       <div class="stat"><small>Closed</small><b class="num">${closed.length}</b><em>${closed.filter(c => c.r > 0).length} won · ${closed.filter(c => c.r < 0).length} lost</em></div>
       <div class="stat"><small>Live now</small><b class="num">${live.filter(c => c.status !== 'waiting').length}</b><em>${live.filter(c => c.status === 'waiting').length} waiting for entry</em></div>
     </section>
-    <h2>Sona setups</h2>
     ${live.length ? `<div class="calls">${live.map(sonaCard).join('')}</div>`
       : `<div class="empty"><b>No Sona setup right now</b>A setup needs a zone price reacted to at least twice, close enough to price, on the side BTC allows. Checked every 5 minutes.</div>`}
     <h2>Closed Sona trades · 90 days</h2>
@@ -764,6 +827,7 @@ async function load() {
     }
     data = fresh;
     render();
+    loadHer();
   } catch (e) {
     if (!data) {
       $('#live').innerHTML = `<div class="empty"><b>Calls aren't published yet</b>The cloud scanner writes them every 5 minutes. (${esc(e.message)})</div>`;

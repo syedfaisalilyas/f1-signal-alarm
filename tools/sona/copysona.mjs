@@ -18,6 +18,7 @@ import { fileURLToPath } from 'node:url';
 import { HOME, sleep, logger, loadJSON, saveJSON, price, listed, tgSend, tgUpdates, esc } from './common.mjs';
 import * as P from './paper.mjs';
 import { makeTicker } from './live.mjs';
+import { publish } from './publish.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const CHANNEL = 'sonaabeyg';
@@ -154,7 +155,7 @@ function findPos(a) {
     b.positions.filter(p => p.coin === a.coin.toUpperCase() && (!a.side || p.side === a.side[0])).at(-1);
 }
 
-async function execute(a) {
+async function execute(a, why = {}) {
   const b = S.book, coin = a.coin.toUpperCase().replace(/USDT$/, '');
   const side = a.side ? a.side[0] : null;
   const say = [];
@@ -176,7 +177,10 @@ async function execute(a) {
     const temp = a.sl == null;
     const sl = a.sl ?? +(ref * (1 - (side === 'L' ? 1 : -1) * TEMP_SL(coin))).toPrecision(6);
     try {
-      const p = P.open(b, { coin, side, e1, e2: a.entry2, sl, slProvisional: temp, tps: a.tps, src: `#${a.from_post}`, mkt: px, ttlH: 120, marginPct: a.margin_pct ?? P.MARGIN_PCT, lev: a.leverage ?? P.LEV });
+      const p = P.open(b, { coin, side, e1, e2: a.entry2, sl, slProvisional: temp, tps: a.tps, src: `#${a.from_post}`, mkt: px, ttlH: 120, marginPct: a.margin_pct ?? P.MARGIN_PCT, lev: a.leverage ?? P.LEV, note: why.summary || '' });
+      // for the website: her own words and which post it came from
+      const post = (why.posts || []).find(x => x.id === a.from_post) || why.posts?.at(-1);
+      p.postId = post?.id ?? a.from_post; p.quote = (post?.text || post?.ocr || '').trim().slice(0, 400);
       say.push(`${coin} ${side === 'L' ? 'LONG' : 'SHORT'} ${e1 == null ? `at market ~${P.fmt(px)}` : `limit ${P.fmt(e1)}`}${a.entry2 ? ` + entry 2 ${P.fmt(a.entry2)}` : ''} · SL ${P.fmt(sl)}${temp ? ' (temporary until she gives it)' : ' (30m close)'}${a.tps.length ? ` · TP ${a.tps.map(P.fmt).join('/')}` : ''} · ${p.marginPct}% × ${p.lev}x per entry`);
       // market legs fill on the spot
       say.push(...P.onBar(b, p, { h: px, l: px, c: px, closed: false }));
@@ -211,7 +215,7 @@ async function handle(posts, userAnswer = null) {
   if (!r) { log('could not interpret', ids); await tgSend(`⚠️ <b>copysona</b>: couldn't read her post ${ids}. Check the channel.`); return; }
   log('read', ids, '→', r.summary, JSON.stringify(r.actions));
   const done = [];
-  for (const a of r.actions) done.push(...await execute(a).catch(e => [`error: ${e.message}`]));
+  for (const a of r.actions) done.push(...await execute(a, { summary: r.summary, posts }).catch(e => [`error: ${e.message}`]));
   save();
   if (done.length) {
     log('did', done.join(' | '));
@@ -307,6 +311,7 @@ for (;;) {
     if (Date.now() >= nextPoll) { nextPoll = Date.now() + POLL_MS; await poll(); }
     await checkReplies();
     await tick();
+    await publish(S).catch(e => log('publish', e.message));
   } catch (e) { log('loop error', e.stack?.split('\n')[0] || e.message); }
   await sleep(TICK_MS);
 }
