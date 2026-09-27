@@ -1,4 +1,4 @@
-// The 🟣 Sona tab on the Calls page: her zone setups on her 13 coins, why
+// The 🟣 Sona tab on the Calls page: her zone setups on her coins, why
 // each one is there, and every one tracked to TP or SL. Called by calls.js on
 // each 5-min scan; the result is doc.sona in calls.json.
 //

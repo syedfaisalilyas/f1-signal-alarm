@@ -12,8 +12,8 @@
 // planned average and 1.5R from entry 1. Shorts mirror this.
 // BTC leads: longs only while BTC's daily close is in the top half of its
 // 20-day range, shorts only in the bottom half.
-// Her coins — the ones she traded all year.
-export const COINS = ['BTC', 'ETH', 'SOL', 'XRP', 'SUI', 'LINK', 'AAVE', 'ADA', 'DOGE', 'TAO', 'LTC', 'DOT', 'UNI'];
+// Her coins — the ones she traded all year, plus ONDO, WLD and AVAX (her Sep 2026 trades).
+export const COINS = ['BTC', 'ETH', 'SOL', 'XRP', 'SUI', 'LINK', 'AAVE', 'ADA', 'DOGE', 'TAO', 'LTC', 'DOT', 'UNI', 'ONDO', 'WLD', 'AVAX'];
 
 export const CFG = {
   LOOKBACK: 360, PIV: 4, REACT_ATR: 1.5, REACT_BARS: 18, CLUSTER_ATR: 0.6, MIN_WIDTH_ATR: 0.3,
