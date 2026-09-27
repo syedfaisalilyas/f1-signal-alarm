@@ -1,21 +1,22 @@
 // copysona — copy Sona's (@sonaabeyg) trades on paper.
 //
-// Every minute: fetch her newest posts (through the tg.i-c-a.su mirror — t.me
-// is TLS-blocked on this network), OCR any screenshot, and hand the new posts
-// plus the last 40 for context to headless Claude (`claude -p`, runs on the
-// user's plan) with rules.md. Claude answers with actions (open / add entry /
-// set SL / SL to entry / half book / close); the paper book executes them.
-// When Claude can't tell what she means it asks the user on Telegram and the
-// trade waits for the answer. Send the bot "status" for the book.
+// Every minute: fetch her newest posts (through the tg.i-c-a.su mirror), OCR
+// any screenshot (MEXC cards), and read each post with fixed rules (parse.mjs —
+// no AI). Clear posts become paper actions (open / add entry / set SL / SL to
+// entry / half book / close). When a post is unclear, the user gets a Telegram
+// question with tap buttons; the answer (a button, or text like "xrp", "long",
+// "open xrp long 1.53 sl 1.49", "close xrp", "skip") decides. Send "status" for
+// the books. The user can also send those commands any time to steer it.
 //
 //   node tools/sona/copysona.mjs            run forever
 //   node tools/sona/copysona.mjs --once     one poll, then exit (testing)
-//   node tools/sona/copysona.mjs --replay <postId>   interpret one old post, print, don't trade
-import { execFile, spawn } from 'node:child_process';
+//   node tools/sona/copysona.mjs --replay <postId>   read one old post, print, don't trade
+import { execFile } from 'node:child_process';
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { HOME, sleep, logger, loadJSON, saveJSON, price, listed, tgSend, tgUpdates, esc } from './common.mjs';
+import { HOME, sleep, logger, loadJSON, saveJSON, price, listed, tgSend, tgUpdates, tgAnswer, esc } from './common.mjs';
+import { readPost, readUser, coinsIn, readCard } from './parse.mjs';
 import * as P from './paper.mjs';
 import { makeTicker } from './live.mjs';
 import { publish } from './publish.mjs';
@@ -24,10 +25,9 @@ const HERE = dirname(fileURLToPath(import.meta.url));
 const CHANNEL = 'sonaabeyg';
 const MIRROR = 'https://tg.i-c-a.su';
 const POLL_MS = 60e3, TICK_MS = 20e3, CTX = 40, MAX_OPEN = 4;
-const MODEL = process.env.SONA_MODEL || 'sonnet';
 const log = logger('copysona');
 const STATE_F = 'copysona.json';
-const S = loadJSON(STATE_F, { lastId: 0, ctx: [], tgOffset: 0, pending: [], book: P.makeBook('copysona', 100) });
+const S = loadJSON(STATE_F, { lastId: 0, ctx: [], tgOffset: 0, pending: [], qSeq: 0, book: P.makeBook('copysona', 100) });
 const save = () => saveJSON(STATE_F, S);
 
 // ── mirror ────────────────────────────────────────────────────────────────
@@ -48,12 +48,17 @@ async function mirror(path, tries = 8) {
 }
 
 // ── OCR ───────────────────────────────────────────────────────────────────
+// macOS: Vision (ocr.swift). Linux (the VPS): tesseract. Either way it's only a
+// helper for reading her MEXC cards.
+const MAC = process.platform === 'darwin';
 const OCR_BIN = join(HOME, 'ocr');
 function ensureOcr() {
-  if (existsSync(OCR_BIN)) return Promise.resolve();
+  if (!MAC || existsSync(OCR_BIN)) return Promise.resolve();
   return new Promise((res, rej) => execFile('swiftc', ['-O', join(HERE, 'ocr.swift'), '-o', OCR_BIN], e => e ? rej(e) : res()));
 }
 function ocr(path) {
+  if (!MAC) return new Promise(res => execFile('tesseract', [path, 'stdout'], { timeout: 60000 }, (e, out) =>
+    res(e ? '' : out.split('\n').map(l => l.trim()).filter(Boolean).join(' | '))));
   return new Promise(res => execFile(OCR_BIN, [path], { timeout: 60000 }, (e, out) => res(e ? '' : (out.split('\t')[1] || '').trim())));
 }
 
@@ -78,75 +83,16 @@ async function fetchNew() {
   return out;
 }
 
-// ── interpretation ────────────────────────────────────────────────────────
-const SCHEMA = {
-  type: 'object', additionalProperties: false,
-  properties: {
-    actions: {
-      type: 'array', items: {
-        type: 'object', additionalProperties: false,
-        properties: {
-          type: { enum: ['open', 'add_entry', 'set_sl', 'set_tp', 'sl_to_entry', 'book_half', 'close', 'cancel_orders'] },
-          coin: { type: 'string' }, side: { enum: ['LONG', 'SHORT', ''] },
-          entry1: { type: ['number', 'null'] }, entry2: { type: ['number', 'null'] },
-          sl: { type: ['number', 'null'] }, tps: { type: 'array', items: { type: 'number' } },
-          margin_pct: { type: ['number', 'null'] }, leverage: { type: ['number', 'null'] },
-          position_id: { type: 'string' }, from_post: { type: 'number' }
-        },
-        required: ['type', 'coin', 'side', 'entry1', 'entry2', 'sl', 'tps', 'margin_pct', 'leverage', 'position_id', 'from_post']
-      }
-    },
-    question: { type: 'string' }, guess: { type: 'string' }, summary: { type: 'string' }
-  },
-  required: ['actions', 'question', 'guess', 'summary']
-};
-
-const pkt = s => new Date(s * 1000 + 5 * 3600e3).toISOString().slice(5, 16).replace('T', ' ');
-function renderPost(p) {
-  return `#${p.id} [${pkt(p.date)} PKT]${p.reply ? ` reply_to #${p.reply}` : ''}${p.media ? ` <${p.media.replace('messageMedia', '').toLowerCase()}>` : ''}${p.img ? ` image=${p.img}` : ''}\n` +
-    (p.text ? p.text.trim() + '\n' : '') + (p.ocr ? `  [OCR of image: ${p.ocr}]\n` : '');
+// ── reading her posts ─────────────────────────────────────────────────────
+// Prices first (the reader drops numbers that are nowhere near the coin's
+// price, like "liquidation below 30,000"), then the rules in parse.mjs.
+async function readOne(post, hints = {}) {
+  const ctx = S.ctx.filter(p => p.id < post.id).slice(-CTX);
+  const coins = new Set([...coinsIn(post.text || ''), readCard(post.ocr)?.coin, hints.coin, ...S.book.positions.map(p => p.coin)].filter(Boolean));
+  const px = {};
+  for (const c of coins) px[c] = await price(c).catch(() => null);
+  return readPost(post, ctx, S.book.positions, c => px[c] ?? null, hints);
 }
-
-async function interpret(newPosts, userAnswer = null) {
-  const b = S.book;
-  const prices = {};
-  for (const p of b.positions) prices[p.coin] ??= await price(p.coin).catch(() => null);
-  const posList = b.positions.map(p => `${p.id}: ${p.coin} ${p.side === 'L' ? 'LONG' : 'SHORT'} ${p.status} entries ${p.legs.map(l => `${P.fmt(l.px)}${l.filled ? '✓' : ''}`).join(', ')} SL ${P.fmt(p.sl)}${p.slProvisional ? ' (temporary — she has not given it yet)' : ''} TPs ${p.tps.map(P.fmt).join(',') || 'none'} now ${P.fmt(prices[p.coin])}`).join('\n') || 'none';
-  const recentClosed = b.history.slice(-6).map(p => `${p.coin} ${p.side === 'L' ? 'LONG' : 'SHORT'} entries ${p.legs.map(l => P.fmt(l.px)).join('/')} SL ${P.fmt(p.sl)} closed: ${p.exitWhy}`).join('\n') || 'none';
-  const newIds = new Set(newPosts.map(p => p.id));
-  const ctx = S.ctx.filter(p => !newIds.has(p.id)).slice(-CTX);
-  const prompt = `${readFileSync(join(HERE, 'rules.md'), 'utf8')}
-
-# Earlier messages (context only — already handled)
-${ctx.map(renderPost).join('\n') || 'none'}
-
-# Our open paper positions
-${posList}
-
-# Recently closed
-${recentClosed}
-
-# NEW messages to act on now
-${newPosts.map(renderPost).join('\n')}
-${userAnswer ? `\n# The user answered your earlier question about these messages\n"${userAnswer}"\nUse this answer. Only ask again if it truly doesn't resolve it.\n` : ''}
-Decide the actions for the NEW messages only.`;
-  const args = ['-p', '--model', MODEL, '--output-format', 'json', '--json-schema', JSON.stringify(SCHEMA),
-    '--tools', 'Read', '--allowedTools', 'Read', '--add-dir', join(HOME, 'img'), '--no-session-persistence', '--setting-sources', ''];
-  for (let attempt = 0; attempt < 2; attempt++) {
-    const out = await new Promise(res => {
-      const c = spawn('claude', args, { cwd: HOME, stdio: ['pipe', 'pipe', 'pipe'] });
-      let s = ''; c.stdout.on('data', d => s += d);
-      const kill = setTimeout(() => c.kill('SIGKILL'), 300e3);
-      c.on('close', () => { clearTimeout(kill); res(s); });
-      c.stdin.end(prompt);
-    });
-    try { const j = JSON.parse(out); if (j.structured_output) return j.structured_output; log('claude: no structured output', (j.result || '').slice(0, 200)); }
-    catch { log('claude: bad output', out.slice(0, 200)); }
-    await sleep(5000);
-  }
-  return null;
-}
-
 // ── executing actions ─────────────────────────────────────────────────────
 const TEMP_SL = coin => /^(BTC|ETH)$/.test(coin) ? 0.015 : 0.03;   // her typical zone depth
 function findPos(a) {
@@ -187,7 +133,7 @@ async function execute(a, why = {}) {
     } catch (e) { say.push(`skipped ${coin}: ${e.message}`); }
     return say;
   }
-  const p = findPos({ ...a, coin });
+  const p = findPos({ ...a, coin, position_id: a.position_id || '' });
   if (!p) return [`${a.type} ${coin}: no such trade open — ignored`];
   const px = await price(p.coin);
   switch (a.type) {
@@ -209,47 +155,77 @@ async function execute(a, why = {}) {
   return say.filter(Boolean);
 }
 
-async function handle(posts, userAnswer = null) {
-  const r = await interpret(posts, userAnswer);
-  const ids = posts.map(p => '#' + p.id).join(',');
-  if (!r) { log('could not interpret', ids); await tgSend(`⚠️ <b>copysona</b>: couldn't read her post ${ids}. Check the channel.`); return; }
-  log('read', ids, '→', r.summary, JSON.stringify(r.actions));
+const quoteOf = p => (p.text || '').trim() || (p.ocr ? `[screenshot] ${p.ocr.slice(0, 160)}` : '[image]');
+
+async function run(actions, summary, posts) {
   const done = [];
-  for (const a of r.actions) done.push(...await execute(a, { summary: r.summary, posts }).catch(e => [`error: ${e.message}`]));
+  for (const a of actions) done.push(...await execute(a, { summary, posts }).catch(e => [`error: ${e.message}`]));
   save();
   if (done.length) {
     log('did', done.join(' | '));
-    await tgSend(`📋 <b>copysona</b> (paper)\n<i>${esc(r.summary)}</i>\n${done.map(esc).join('\n')}`);
+    await tgSend(`📋 <b>copysona</b> (paper)\n<i>${esc(summary)}</i>\n${done.map(esc).join('\n')}`);
   }
-  if (r.question) {
-    const quote = posts.map(p => (p.text || p.ocr || '[image]').slice(0, 300)).join('\n');
-    const mid = await tgSend(`❓ <b>copysona needs you</b>\nShe said:\n<i>${esc(quote)}</i>\n\n${esc(r.question)}\nMy guess: ${esc(r.guess || '—')}\n\n<b>Reply to this message</b> with the answer (or "skip").`);
-    S.pending.push({ tg: mid, posts, question: r.question, at: Date.now() });
-    save();
-    log('asked', r.question);
+}
+
+async function ask(post, r, hints) {
+  const id = ++S.qSeq;
+  const opts = [...r.options.slice(0, 4), { label: '🚫 Ignore' }];
+  const kb = { inline_keyboard: opts.map((o, i) => [{ text: o.label, callback_data: `q:${id}:${i}` }]) };
+  const mid = await tgSend(`❓ <b>copysona needs you</b>\nShe posted (<a href="https://t.me/sonaabeyg/${post.id}">#${post.id}</a>):\n<i>${esc(quoteOf(post).slice(0, 400))}</i>\n\n${esc(r.question)}\n\nTap a button, or reply with the coin / "long" / "short", or e.g. <code>open xrp long 1.53 sl 1.49</code>, or <code>skip</code>.`, null, kb);
+  S.pending.push({ id, tg: mid, post, hints, options: opts, question: r.question, at: Date.now() });
+  save();
+  log('asked', `#${post.id}`, r.question);
+}
+
+async function handle(posts, hints = {}) {
+  for (const post of posts) {
+    const r = await readOne(post, hints);
+    if (r.actions.length) { log('read', `#${post.id}`, '→', r.summary); await run(r.actions, r.summary, [post]); }
+    if (r.question) await ask(post, r, hints);
   }
+}
+
+async function status() {
+  // sonabot has no Telegram reader of its own — this bot answers for both.
+  const books = [S.book, loadJSON('sonabot.json', null)?.book].filter(Boolean);
+  const prices = {};
+  for (const b of books) for (const p of b.positions) prices[p.coin] ??= await price(p.coin).catch(() => null);
+  await tgSend(`<pre>${esc(books.map(b => P.summary(b, prices)).join('\n\n'))}</pre>`);
+}
+
+// the user's answer to question q: a button index, or text
+async function answer(q, pick, text) {
+  S.pending = S.pending.filter(x => x !== q); save();
+  const o = pick != null ? q.options[pick] : null;
+  if (o && !o.actions && !o.hint) { log('user ignored', `#${q.post.id}`); await tgSend('👍 ignored'); return; }
+  if (o?.actions) { log('user chose', o.label); await run(o.actions.map(a => ({ ...a, from_post: q.post.id })), `you chose: ${o.label}`, [q.post]); return; }
+  const u = o?.hint ? { hint: o.hint } : readUser(text || '');
+  if (u.skip) { await tgSend('👍 skipped'); return; }
+  if (u.actions) { await run(u.actions.map(a => ({ ...a, from_post: q.post.id })), `you said: ${text}`, [q.post]); return; }
+  if (u.hint) { log('user hint', JSON.stringify(u.hint)); await handle([q.post], { ...q.hints, ...u.hint }); return; }
+  S.pending.push(q); save();
+  await tgSend('I didn\'t get that — tap a button, or send e.g. <code>xrp</code>, <code>long</code>, <code>open xrp long 1.53 sl 1.49</code>, or <code>skip</code>.');
 }
 
 async function checkReplies() {
   const { offset, msgs } = await tgUpdates(S.tgOffset);
   S.tgOffset = offset;
   for (const m of msgs) {
-    const t = m.text.trim();
-    if (/^\/?status$/i.test(t)) {
-      // sonabot has no Telegram reader of its own — this bot answers for both.
-      const books = [S.book, loadJSON('sonabot.json', null)?.book].filter(Boolean);
-      const prices = {};
-      for (const b of books) for (const p of b.positions) prices[p.coin] ??= await price(p.coin).catch(() => null);
-      await tgSend(`<pre>${esc(books.map(b => P.summary(b, prices)).join('\n\n'))}</pre>`);
+    if (m.callback) {
+      await tgAnswer(m.cbId);
+      const [, qid, i] = m.callback.split(':');
+      const q = S.pending.find(x => x.id === +qid);
+      if (!q) { await tgSend('That question was already answered.'); continue; }
+      await answer(q, +i, null);
       continue;
     }
-    const q = S.pending.find(x => x.tg === m.replyTo) || (S.pending.length === 1 ? S.pending[0] : null);
-    if (!q) { await tgSend(S.pending.length ? 'Reply to the exact question message so I know which one you mean.' : 'No open questions. Send "status" for the paper book.'); continue; }
-    S.pending = S.pending.filter(x => x !== q);
-    save();
-    if (/^skip$/i.test(t)) { log('user skipped', q.question); await tgSend('👍 skipped'); continue; }
-    log('user answered', q.question, '→', t);
-    await handle(q.posts, t);
+    const t = m.text.trim(), u = readUser(t);
+    if (u.status) { await status(); continue; }
+    const q = S.pending.find(x => x.tg === m.replyTo) || (m.replyTo == null && S.pending.length === 1 ? S.pending[0] : null);
+    if (q) { await answer(q, null, t); continue; }
+    // not an answer: a direct command ("close xrp", "open sol long sl 80", "be tao")
+    if (u.actions) { await run(u.actions, `you said: ${t}`, []); continue; }
+    await tgSend(S.pending.length ? `${S.pending.length} questions are open — reply to the one you mean.` : 'Send <code>status</code>, or a command like <code>close xrp</code>, <code>half tao</code>, <code>be ltc</code>, <code>sl xrp 1.45</code>, <code>open sol long 84 sl 80</code>.');
   }
   save();
 }
@@ -291,19 +267,19 @@ if (argv[0] === '--replay') {
   // History comes from ~/.sona/history.jsonl (the year pulled on 27 Sep 2026) — the mirror can't page by id.
   const hist = readFileSync(join(HOME, 'history.jsonl'), 'utf8').trim().split('\n').map(JSON.parse).sort((a, b) => a.id - b.id);
   const ms = hist.filter(m => m.id <= id && m.id > id - 60).map(m => ({ id: m.id, date: m.date, message: m.text, media: m.media ? { _: m.media } : null, reply_to: m.reply ? { reply_to_msg_id: m.reply } : null }));
-  S.ctx = ms.filter(m => m.id < id).map(m => ({ id: m.id, date: m.date, text: (m.message || '').replace(/<[^>]+>/g, ''), media: m.media?._ || null, reply: m.reply_to?.reply_to_msg_id || null }));
+  S.ctx = ms.filter(m => m.id < id).map(m => ({ id: m.id, date: m.date, text: (m.message || '').replace(/<br>/g, '\n').replace(/<[^>]+>/g, ''), media: m.media?._ || null, reply: m.reply_to?.reply_to_msg_id || null }));
   const m = ms.find(x => x.id === id);
   if (!m) { console.log('post not on that page'); process.exit(1); }
-  const post = { id, date: m.date, text: (m.message || '').replace(/<[^>]+>/g, ''), media: m.media?._ || null, reply: m.reply_to?.reply_to_msg_id || null };
+  const post = { id, date: m.date, text: (m.message || '').replace(/<br>/g, '\n').replace(/<[^>]+>/g, ''), media: m.media?._ || null, reply: m.reply_to?.reply_to_msg_id || null };
   if (post.media === 'messageMediaPhoto') { const img = await mirror(`media/${CHANNEL}/${id}`); if (img?.buf) { post.img = join(HOME, 'img', `${id}.jpg`); writeFileSync(post.img, img.buf); post.ocr = await ocr(post.img); } }
   S.book = P.makeBook('replay', 100);
-  console.log(JSON.stringify(await interpret([post]), null, 1));
+  console.log(JSON.stringify(await readOne(post), null, 1));
   process.exit(0);
 }
 if (!S.lastId) await seed();
 if (argv[0] === '--once') { await poll(); await checkReplies(); await tick(); process.exit(0); }
 
-log(`copysona started (paper, ${P.SIZING}, model ${MODEL}); equity ${P.equity(S.book).toFixed(2)}`);
+log(`copysona started (paper, ${P.SIZING}, rule reader); equity ${P.equity(S.book).toFixed(2)}`);
 await tgSend(`🟢 <b>copysona</b> started — paper mode, copying Sona's trades. Send "status" anytime.`);
 let nextPoll = 0;
 for (;;) {

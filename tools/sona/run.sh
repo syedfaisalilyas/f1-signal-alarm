@@ -8,6 +8,9 @@ loop() { # name script
 }
 case $1 in
   start)
+    # Since 27 Sep 2026 both bots run on the Oracle server (systemd: sona-copysona, sona-sonabot).
+    # Two copysonas would both trade and both read your Telegram replies.
+    [ "$2" = "--here" ] || { echo "The bots run on the server now (ssh ubuntu@140.245.246.123; systemctl status sona-copysona sona-sonabot)."; echo "Only run them here after stopping the server ones:  $0 start --here"; exit 1; }
     for b in copysona sonabot; do
       rm -f $H/$b.stop
       pgrep -f "tools/sona/$b.mjs" >/dev/null && { echo "$b already running"; continue; }

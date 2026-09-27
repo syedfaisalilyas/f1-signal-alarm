@@ -76,13 +76,13 @@ export async function listed(coin) {
 const TG = () => `https://api.telegram.org/bot${process.env.TELEGRAM_TOKEN}`;
 const esc = s => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 export { esc };
-export async function tgSend(html, replyTo) {
+export async function tgSend(html, replyTo, markup) {
   if (!process.env.TELEGRAM_TOKEN || !process.env.TELEGRAM_CHAT_ID) return null;
   for (let i = 0; i < 3; i++) {
     try {
       const r = await fetch(`${TG()}/sendMessage`, {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ chat_id: process.env.TELEGRAM_CHAT_ID, text: html, parse_mode: 'HTML', disable_web_page_preview: true, ...(replyTo ? { reply_to_message_id: replyTo } : {}) }),
+        body: JSON.stringify({ chat_id: process.env.TELEGRAM_CHAT_ID, text: html, parse_mode: 'HTML', disable_web_page_preview: true, ...(replyTo ? { reply_to_message_id: replyTo } : {}), ...(markup ? { reply_markup: markup } : {}) }),
         signal: AbortSignal.timeout(25000)
       });
       const j = await r.json();
@@ -93,7 +93,11 @@ export async function tgSend(html, replyTo) {
   }
   return null;
 }
-// Messages the user sent to the bot since `offset`. Only the configured chat counts.
+// Stop the spinner on a tapped button.
+export async function tgAnswer(id) {
+  try { await fetch(`${TG()}/answerCallbackQuery`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ callback_query_id: id }), signal: AbortSignal.timeout(15000) }); } catch { }
+}
+// Messages the user sent to the bot since `offset` (text and button taps). Only the configured chat counts.
 export async function tgUpdates(offset) {
   if (!process.env.TELEGRAM_TOKEN) return { offset, msgs: [] };
   try {
@@ -103,9 +107,11 @@ export async function tgUpdates(offset) {
     const msgs = [];
     for (const u of j.result) {
       offset = Math.max(offset, u.update_id + 1);
-      const m = u.message;
+      const m = u.message, cb = u.callback_query;
       if (m?.text && String(m.chat.id) === String(process.env.TELEGRAM_CHAT_ID))
         msgs.push({ id: m.message_id, text: m.text, replyTo: m.reply_to_message?.message_id ?? null });
+      if (cb && String(cb.message?.chat?.id) === String(process.env.TELEGRAM_CHAT_ID))   // a tapped button
+        msgs.push({ id: cb.message.message_id, callback: cb.data, cbId: cb.id, text: '' });
     }
     return { offset, msgs };
   } catch { return { offset, msgs: [] }; }

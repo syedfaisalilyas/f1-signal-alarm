@@ -1,7 +1,7 @@
 // Publish copysona's trades to GitHub so the Calls page (🟣 Sona tab) can
-// show her channel trades next to the strategy's. copysona runs on the Mac
-// (it needs the user's Claude login), so it pushes; the page reads
-// copysona.json from the `sona-live` branch. Uses the local `gh` login.
+// show her channel trades next to the strategy's. copysona pushes; the page
+// reads copysona.json from the `sona-live` branch. With GITHUB_TOKEN set (the
+// VPS) it talks to the REST API directly, otherwise through the `gh` login.
 import { execFile } from 'node:child_process';
 import { writeFileSync } from 'node:fs';
 import { join } from 'node:path';
@@ -9,6 +9,17 @@ import { HOME } from './common.mjs';
 import * as P from './paper.mjs';
 
 const REPO = 'syedfaisalilyas/f1-signal-alarm', BRANCH = 'sona-live', FILE = 'copysona.json';
+
+const TOKEN = process.env.GITHUB_TOKEN;
+async function api(method, path, body) {
+  const r = await fetch(`https://api.github.com/${path}`, {
+    method, headers: { Authorization: `Bearer ${TOKEN}`, Accept: 'application/vnd.github+json', 'User-Agent': 'copysona' },
+    body: body ? JSON.stringify(body) : undefined, signal: AbortSignal.timeout(30000)
+  });
+  const j = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error(`github ${r.status} ${j.message || ''}`);
+  return j;
+}
 
 function gh(args, input) {
   return new Promise((res, rej) => {
@@ -18,6 +29,12 @@ function gh(args, input) {
 }
 
 async function ensureBranch() {
+  if (TOKEN) {
+    try { await api('GET', `repos/${REPO}/branches/${BRANCH}`); return; } catch { }
+    const sha = (await api('GET', `repos/${REPO}/git/ref/heads/main`)).object.sha;
+    await api('POST', `repos/${REPO}/git/refs`, { ref: `refs/heads/${BRANCH}`, sha });
+    return;
+  }
   try { await gh(['api', `repos/${REPO}/branches/${BRANCH}`]); return; } catch { }
   const sha = JSON.parse(await gh(['api', `repos/${REPO}/git/ref/heads/main`])).object.sha;
   await gh(['api', '-X', 'POST', `repos/${REPO}/git/refs`, '-f', `ref=refs/heads/${BRANCH}`, '-f', `sha=${sha}`]);
@@ -53,10 +70,16 @@ export async function publish(S, extra = {}) {
   doc.updatedAt = Date.now();
   if (!branchOk) { await ensureBranch(); branchOk = true; }
   let sha;
-  try { sha = JSON.parse(await gh(['api', `repos/${REPO}/contents/${FILE}?ref=${BRANCH}`])).sha; } catch { }
-  const f = join(HOME, 'publish.json');
-  writeFileSync(f, JSON.stringify({ message: 'copysona update', branch: BRANCH, content: Buffer.from(JSON.stringify(doc)).toString('base64'), ...(sha ? { sha } : {}) }));
-  await gh(['api', '-X', 'PUT', `repos/${REPO}/contents/${FILE}`, '--input', f]);
+  const put = sha => ({ message: 'copysona update', branch: BRANCH, content: Buffer.from(JSON.stringify(doc)).toString('base64'), ...(sha ? { sha } : {}) });
+  if (TOKEN) {
+    try { sha = (await api('GET', `repos/${REPO}/contents/${FILE}?ref=${BRANCH}`)).sha; } catch { }
+    await api('PUT', `repos/${REPO}/contents/${FILE}`, put(sha));
+  } else {
+    try { sha = JSON.parse(await gh(['api', `repos/${REPO}/contents/${FILE}?ref=${BRANCH}`])).sha; } catch { }
+    const f = join(HOME, 'publish.json');
+    writeFileSync(f, JSON.stringify(put(sha)));
+    await gh(['api', '-X', 'PUT', `repos/${REPO}/contents/${FILE}`, '--input', f]);
+  }
   lastSent = key;
   return 'sent';
 }
