@@ -4,7 +4,8 @@
 //
 //   node tools/sona/sonabot.mjs              run live on paper (MEXC prices)
 //   node tools/sona/sonabot.mjs --backtest   replay the last year on Binance data
-import { join } from 'node:path';
+import { join, dirname } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { existsSync, readFileSync, writeFileSync, mkdirSync } from 'node:fs';
 import { HOME, sleep, logger, loadJSON, saveJSON, candles, price, tgSend, esc } from './common.mjs';
 import * as P from './paper.mjs';
@@ -25,6 +26,7 @@ async function scan(book, get4h, regime, px, t, onOpen) {
     const s = setup(k4, await px(coin), regime);
     if (!s) continue;
     const p = P.open(book, { coin, side: s.side, e1: s.e1, e2: s.e2, sl: s.sl, tps: s.tps, src: 'zone', ttlH: ORDER_TTL_H, note: `zone ${P.fmt(s.zone.lo)}–${P.fmt(s.zone.hi)} ×${s.zone.touch}` });
+    p.sl0 = s.sl;
     if (t) { p.createdAt = t; p.expiresAt = t + ORDER_TTL_H * 3600e3; }
     onOpen?.(p, s);
   }
@@ -95,6 +97,23 @@ async function backtest() {
   console.log('by coin:', COINS.map(c => { const t = trades.filter(p => p.coin === c); return `${c} ${t.length}/${t.reduce((a, p) => a + p.realized, 0).toFixed(1)}`; }).join(' '));
   console.log('how trades ended:'); for (const [k, v] of Object.entries(why).sort((a, b) => b[1] - a[1])) console.log(`  ${v}× ${k}`);
   writeFileSync(join(HOME, 'sonabot-backtest.log'), log.join('\n'));
+  // the last 90 days as the Sona tab's history (tools/sona/backfill.json → calls-sona.mjs)
+  const toR = p => {
+    const f = p.legs.filter(l => l.filled), q = f.reduce((s, l) => s + l.qty, 0), avg = f.reduce((s, l) => s + l.px * l.qty, 0) / q;
+    const d = p.side === 'L' ? 1 : -1, risk = Math.abs(avg - p.sl0) * q;
+    return +(p.exits.reduce((s, e) => s + (e.px - avg) * d * e.q, 0) / risk).toFixed(2);
+  };
+  const recent = trades.filter(p => p.closedAt > END - 90 * 864e5).map(p => ({
+    coin: p.coin, side: p.side === 'L' ? 1 : -1, legs: p.legs.filter(l => l.filled).map(l => +l.px.toPrecision(6)),
+    sl: +p.sl0.toPrecision(6), tp1: +p.tps[0].toPrecision(6), tp2: +p.tps[1].toPrecision(6), zone: p.note,
+    filledAt: Math.min(...p.legs.filter(l => l.filled).map(l => l.at)), closedAt: p.closedAt,
+    status: /TP2/.test(p.exitWhy) ? 'tp' : /entry/.test(p.exitWhy) ? 'be' : 'sl',
+    tp1Hit: p.exits.some(e => /TP1/.test(e.why)), r: toR(p)
+  }));
+  const bf = join(dirname(fileURLToPath(import.meta.url)), 'backfill.json');
+  const prev = existsSync(bf) ? JSON.parse(readFileSync(bf, 'utf8')) : {};
+  writeFileSync(bf, JSON.stringify({ ...prev, strategy: { made: new Date().toISOString().slice(0, 10), from: new Date(END - 90 * 864e5).toISOString().slice(0, 10), to: new Date(END).toISOString().slice(0, 10), trades: recent } }));
+  console.log(`backfill: ${recent.length} trades in the last 90 days → ${bf}`);
 }
 
 // ── live (paper) ──────────────────────────────────────────────────────────

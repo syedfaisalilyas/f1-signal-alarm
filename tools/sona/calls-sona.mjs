@@ -7,7 +7,13 @@
 //   stop = a 30m CLOSE beyond the SL (plus a hard disaster stop 2R out);
 //   TP1 → book half, stop to entry; TP2 → close the rest;
 //   an order that doesn't fill in 48 h expires; a new zone replaces an unfilled one.
+import { readFileSync } from 'node:fs';
 import { setup, btcRegime, COINS, CFG } from './zones.mjs';
+
+// History so the tab isn't empty on day one: the strategy's last 90 days
+// replayed (sonabot.mjs --backtest writes it) and 44 of her own calls checked
+// on real prices. Live trades are added on top as they close.
+const BACKFILL = (() => { try { return JSON.parse(readFileSync(new URL('./backfill.json', import.meta.url), 'utf8')); } catch { return null; } })();
 
 const TTL = 48 * 3600;              // seconds an unfilled setup waits
 const KEEP = 90 * 86400e3;          // closed history kept
@@ -114,7 +120,7 @@ export function sonaPass({ prev, markets, b4, m5, price, btc4 }) {
   }
   const shown = calls.filter(c => c.status !== 'replaced');
   return {
-    updatedAt: Date.now(), regime, btcRange: btcRange.map(sig), coins: COINS, bt: SONA_BT,
+    updatedAt: Date.now(), regime, btcRange: btcRange.map(sig), coins: COINS, bt: SONA_BT, backfill: BACKFILL,
     calls: shown.filter(c => c.status !== 'expired' || Date.now() - c.closedAt < 7 * 86400e3)
   };
 }
