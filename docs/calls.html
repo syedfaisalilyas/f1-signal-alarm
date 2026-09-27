@@ -454,18 +454,19 @@ function render() {
     $('#c-' + f).textContent = n ? `${n} live` : data.markets.filter(m => f === 'all' || m.cls === f).length;
   }
 
-  const closed = data.calls.filter(c => c.status !== 'active' && inF(c)).sort((a, b) => b.closedAt - a.closedAt);
+  rank = {};
+  data.markets.filter(m => m.cls === 'crypto').sort((a, b) => (b.turnover || 0) - (a.turnover || 0)).forEach((m, k) => { rank[m.id] = k; });
+  // stats and history follow every filter, not just the tab
+  const passC = c => inF(c) && passF(c.market, c.side, c.verdict || verdictOf(c.side, c.checks || []));
+  const closed = data.calls.filter(c => c.status !== 'active' && passC(c)).sort((a, b) => b.closedAt - a.closedAt);
   const wins = closed.filter(c => c.r > 0).length, net = closed.reduce((s, c) => s + c.r, 0);
   const be = 100 / (1 + data.rr), wr = closed.length ? wins / closed.length * 100 : null;
   $('#stats').innerHTML = `
     <div class="stat"><small>Win rate</small><b class="num ${wr == null ? '' : wr > be ? 'up' : 'down'}">${wr == null ? '–' : wr.toFixed(0) + '%'}</b><em>needs &gt;${be.toFixed(0)}% at 1:${data.rr}</em></div>
     <div class="stat"><small>Overall result</small><b class="num ${net >= 0 ? 'up' : 'down'}">${closed.length ? (net >= 0 ? '+' : '') + net.toFixed(1) + 'R' : '–'}</b><em>all closed calls combined</em></div>
     <div class="stat"><small>Closed calls</small><b class="num">${closed.length}</b><em>${wins} won · ${closed.length - wins} lost</em></div>
-    <div class="stat"><small>Live now</small><b class="num">${active.filter(inF).length}</b><em>${data.markets.filter(inF).length} markets scanned</em></div>`;
+    <div class="stat"><small>Live now</small><b class="num">${active.filter(passC).length}</b><em>${data.markets.filter(inF).length} markets scanned</em></div>`;
 
-
-  rank = {};
-  data.markets.filter(m => m.cls === 'crypto').sort((a, b) => (b.turnover || 0) - (a.turnover || 0)).forEach((m, k) => { rank[m.id] = k; });
   renderFilters();
   renderLessons();
   renderLive();
