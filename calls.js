@@ -38,6 +38,8 @@
 import fs from 'fs';
 import path from 'path';
 import { analyse, settle as settleDaily, dailyTrend, SETUPS, BACKTEST, RR as DRR } from './setups.js';
+import { sonaPass } from './tools/sona/calls-sona.mjs';
+import { COINS as SONA_COINS } from './tools/sona/zones.mjs';
 
 const DIR = path.join(process.cwd(), 'cloud');
 const OUT = path.join(DIR, 'calls.json');
@@ -544,6 +546,21 @@ async function main() {
     } catch (e) { if (m.cls !== 'crypto' || m.major) errors.push(`${m.id} 4h: ${e.message}`); }
   });
 
+  // pass S: Sona's zone setups on her 13 coins (the 🟣 Sona tab)
+  const sonaM = SONA_COINS.map(c => all.find(m => m.id === c + 'USDT')).filter(Boolean);
+  const sonaB4 = {};
+  await pool(sonaM, 4, async m => {
+    try { sonaB4[m.id] = daily[m.id]?.b4 || (m.id === 'BTCUSDT' && btc4) || await bars4h(m); }
+    catch (e) { errors.push(`sona ${m.id} 4h: ${e.message}`); }
+  });
+  const sonaSc = Object.fromEntries(scanned.filter(x => sonaB4[x.m.id]).map(x => [x.m.id, x]));
+  let sona = prev.sona || null;
+  try {
+    sona = sonaPass({ prev: prev.sona, markets: sonaM, b4: sonaB4, btc4,
+      m5: Object.fromEntries(Object.entries(sonaSc).map(([id, x]) => [id, x.bars.m5])),
+      price: Object.fromEntries(Object.entries(sonaSc).map(([id, x]) => [id, x.z.price])) });
+  } catch (e) { errors.push(`sona: ${e.message}`); }
+
   // pass 2: positioning only where it matters — majors, daily setups in play, open calls
   const wanted = scanned.filter(({ m }) => m.cls === 'crypto' &&
     (m.major || (daily[m.id] && daily[m.id].z.status !== 'none') || calls.some(c => c.market === m.id && c.status === 'active')));
@@ -616,7 +633,7 @@ async function main() {
   // keep 90 days of history (daily calls run for up to 30 days)
   const keep = calls.filter(c => c.status === 'active' || Date.now() - (c.closedAt || c.openedAt) < 90 * 864e5);
   const doc = { updatedAt: Date.now(), rr: DRR, markets, calls: keep, errors, cotDate: Object.values(cotData || {})[0]?.date || null,
-    btcUp, retired, ledger: ledger.slice(-3000), learned: { backtest: BACKTEST, setups: SETUPS } };
+    btcUp, retired, ledger: ledger.slice(-3000), learned: { backtest: BACKTEST, setups: SETUPS }, sona };
   fs.mkdirSync(DIR, { recursive: true });
   fs.writeFileSync(OUT, JSON.stringify(doc));
   console.log(`calls: ${markets.length}/${all.length} markets, ${Object.values(ctx.flow).filter(Boolean).length} with crypto positioning, ${keep.filter(c => c.status === 'active').length} active, ${keep.length} kept` +
@@ -624,6 +641,7 @@ async function main() {
   for (const mk of markets.filter(x => x.cls === 'gold' || x.major || x.status === 'ready' || x.status === 'watching'))
     console.log(`  ${mk.id.padEnd(8)} ${String(mk.price).padEnd(10)} ${mk.status.padEnd(9)} D1 ${mk.trend.d1} H1 ${mk.trend.h1}  lean ${mk.leanScore}  ${mk.blockers[0] || ''}`);
   console.log(`  BTC daily uptrend: ${btcUp} · ${Object.keys(daily).length} markets on the daily setups`);
+  if (sona) console.log(`  sona: BTC ${sona.regime > 0 ? 'longs' : sona.regime < 0 ? 'shorts' : 'none'} · ` + sona.calls.filter(c => ['waiting', 'open', 'half'].includes(c.status)).map(c => `${c.coin} ${c.side > 0 ? 'BUY' : 'SELL'} ${c.status} ${c.e1}/${c.e2} SL ${c.sl}`).join(' | '));
 }
 
 export { learn, lossWhy, aplus, rollup, mexcGet, dukaBars, cryptoUniverse, MARKETS as FIXED, ema, atrAt, trend };

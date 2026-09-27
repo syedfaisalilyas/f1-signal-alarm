@@ -245,6 +245,22 @@ footer{margin-top:36px;color:var(--faint);font-size:12px;text-align:center;line-
 .err{margin-top:14px;padding:12px 14px;border-radius:14px;background:rgba(255,93,125,.08);border:1px solid rgba(255,93,125,.25);color:#ffb3c1;font-size:13px}
 .skel{height:120px;border-radius:22px;background:linear-gradient(90deg,var(--card),var(--card2),var(--card));background-size:200% 100%;animation:sh 1.2s infinite}
 @keyframes sh{to{background-position:-200% 0}}
+/* 🟣 Sona tab */
+body.sona .std, body.sona [data-std], body.sona #more{display:none!important}
+#sonaView{display:none} body.sona #sonaView{display:block}
+.sona-intro{margin-top:14px;padding:14px 16px;border-radius:18px;background:rgba(216,164,255,.07);border:1px solid rgba(216,164,255,.28);font-size:13px;color:var(--dim);line-height:1.55}
+.sona-intro b{color:var(--fg)}
+.sona-intro .warn{display:block;margin-top:8px;color:#ffd28a}
+.lv5{grid-template-columns:repeat(auto-fit,minmax(92px,1fr))}
+.lv5 b{white-space:normal;overflow:visible;word-break:break-all}
+.call .chip{white-space:nowrap}
+.sst{display:inline-block;margin-top:10px;padding:6px 10px;border-radius:10px;font-size:12.5px;font-weight:600;background:rgba(255,255,255,.05);border:1px solid var(--line)}
+.sst.open{color:var(--up);border-color:rgba(46,204,113,.35)} .sst.half{color:var(--gold);border-color:rgba(245,196,81,.35)} .sst.waiting{color:#d8a4ff;border-color:rgba(216,164,255,.35)}
+.swhy{margin-top:12px;font-size:12.5px;color:var(--dim);line-height:1.5}
+.swhy h4{margin:12px 0 4px;font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:var(--faint);font-weight:600}
+.swhy ul{margin:0;padding-left:18px} .swhy li{margin:2px 0}
+.react{display:grid;grid-template-columns:auto auto 1fr;gap:2px 12px;font-size:12px}
+.react .up{font-weight:600}
 </style>
 </head>
 <body>
@@ -264,35 +280,37 @@ footer{margin-top:36px;color:var(--faint);font-size:12px;text-align:center;line-
     <button data-f="gold" style="--c:var(--gold)">🥇 Gold <span class="cnt" id="c-gold">–</span></button>
     <button data-f="forex" style="--c:var(--forex)">💱 Forex <span class="cnt" id="c-forex">–</span></button>
     <button data-f="crypto" style="--c:var(--crypto)">₿ Crypto <span class="cnt" id="c-crypto">–</span></button>
+    <button data-f="sona" style="--c:#d8a4ff">🟣 Sona <span class="cnt" id="c-sona">–</span></button>
   </div></nav>
-  <div class="fbar" id="fbar"></div>
-  <div class="fnote" id="fnote"></div>
+  <div class="std fbar" id="fbar"></div>
+  <div class="std fnote" id="fnote"></div>
+  <div id="sonaView"></div>
 
-  <section class="stats" id="stats"></section>
-  <div id="health"></div>
+  <section class="std stats" id="stats"></section>
+  <div class="std" id="health"></div>
 
-  <div id="jwrap" class="hidden"><h2>📒 My journal</h2><section id="journal"></section></div>
+  <div id="jwrap" class="std hidden"><h2>📒 My journal</h2><section id="journal"></section></div>
 
-  <h2>Live calls</h2>
-  <section id="live"><div class="skel"></div></section>
+  <h2 class="std">Live calls</h2>
+  <section data-std id="live"><div class="skel"></div></section>
 
-  <h2>Close to a daily breakout</h2>
-  <section class="watch" id="watch"></section>
+  <h2 class="std">Close to a daily breakout</h2>
+  <section data-std class="watch" id="watch"></section>
 
-  <h2>🔥 Top volatility</h2>
-  <div class="vt"><div class="fg" id="voltf"><button data-v="m5">5 min</button><button data-v="h1">1 hour</button><button data-v="d1">24 hours</button></div><span class="fnote" style="margin:0">biggest high–low range</span></div>
-  <section id="vol"></section>
+  <h2 class="std">🔥 Top volatility</h2>
+  <div class="std vt"><div class="fg" id="voltf"><button data-v="m5">5 min</button><button data-v="h1">1 hour</button><button data-v="d1">24 hours</button></div><span class="fnote" style="margin:0">biggest high–low range</span></div>
+  <section data-std id="vol"></section>
 
-  <h2>Why only these setups</h2>
-  <section id="lessons"></section>
+  <h2 class="std">Why only these setups</h2>
+  <section data-std id="lessons"></section>
 
-  <h2>Market pulse</h2>
-  <div class="tools"><input id="q" type="search" placeholder="Search a market — btc, pepe, gold, eurusd…" autocomplete="off"></div>
-  <section class="grid" id="grid"></section>
+  <h2 class="std">Market pulse</h2>
+  <div class="std tools"><input id="q" type="search" placeholder="Search a market — btc, pepe, gold, eurusd…" autocomplete="off"></div>
+  <section data-std class="grid" id="grid"></section>
   <button class="more hidden" id="more"></button>
 
-  <h2>Closed calls · 90 days</h2>
-  <section id="hist"></section>
+  <h2 class="std">Closed calls · 90 days</h2>
+  <section data-std id="hist"></section>
 
   <div id="errs"></div>
   <footer>
@@ -318,7 +336,7 @@ const $ = s => document.querySelector(s);
 const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
 const store = { get(k, d) { try { return localStorage.getItem(k) ?? d; } catch { return d; } }, set(k, v) { try { localStorage.setItem(k, v); } catch {} } };
 
-let data = null, filter = store.get('f1callsFilter', 'all'), query = '', showAll = false, showAllWatch = false;
+let data = null, filter = new URLSearchParams(location.search).get('tab') || store.get('f1callsFilter', 'all'), query = '', showAll = false, showAllWatch = false;
 const px = {};                                   // live prices: id -> { p, prev, t }
 const F = Object.assign({ verdict: 'all', hot: false, side: 'all', liq: 'all' }, (() => { try { return JSON.parse(store.get('f1callsF', '{}')); } catch { return {}; } })());
 let volTf = store.get('f1callsVol', 'h1'), volAll = false, rank = {};
@@ -460,6 +478,10 @@ function render() {
     const n = active.filter(c => f === 'all' || c.cls === f).length;
     $('#c-' + f).textContent = n ? `${n} live` : data.markets.filter(m => f === 'all' || m.cls === f).length;
   }
+  const sonaLive = (data.sona?.calls || []).filter(c => SONA_LIVE.includes(c.status));
+  $('#c-sona').textContent = sonaLive.length || (data.sona ? 0 : '–');
+  document.body.classList.toggle('sona', filter === 'sona');
+  if (filter === 'sona') { renderSona(); tickAge(); return; }
 
   rank = {};
   data.markets.filter(m => m.cls === 'crypto').sort((a, b) => (b.turnover || 0) - (a.turnover || 0)).forEach((m, k) => { rank[m.id] = k; });
@@ -495,6 +517,78 @@ function render() {
 
   $('#errs').innerHTML = data.errors?.length ? `<div class="err">Some sources didn't answer on the last scan: ${esc(data.errors.join(' · '))}</div>` : '';
   tickAge();
+}
+
+// ─── 🟣 Sona: her zone method as rules (tools/sona/calls-sona.mjs) ───
+const SONA_LIVE = ['waiting', 'open', 'half'];
+const SONA_ST = { tp: '🎯 TP2', be: '➖ Stop at entry', sl: '❌ SL', expired: '⌛ Never filled' };
+const day = t => new Date(t * 1000).toLocaleDateString([], { day: 'numeric', month: 'short' });
+function sonaCard(c) {
+  const L = c.side > 0, dp = c.dp, now = livePx(c.market, c.price);
+  const pts = [c.sl, c.e2, c.e1, c.tp1, c.tp2, now], lo = Math.min(...pts), hi = Math.max(...pts);
+  const pos = x => Math.max(0, Math.min(100, (x - lo) / (hi - lo) * 100));
+  const avg = c.avg ?? c.e1, away = (L ? now - c.e1 : c.e1 - now) / now * 100;
+  const R = Math.abs(avg - c.sl), prog = (now - avg) * c.side / R;
+  const st = c.status === 'waiting'
+    ? `<span class="sst waiting">⏳ Waiting — entry 1 is ${away > 0 ? away.toFixed(2) + '% away' : 'being reached'}</span>`
+    : c.status === 'open'
+      ? `<span class="sst open">🟢 In trade · filled ${c.legs.map(x => fmt(x, dp)).join(' + ')} · <span class="${prog >= 0 ? 'up' : 'down'}">${prog >= 0 ? '+' : ''}${prog.toFixed(2)}R</span></span>`
+      : `<span class="sst half">✅ TP1 hit — half booked (+${(c.booked).toFixed(2)}R), stop now at entry ${fmt(c.beAt, dp)}</span>`;
+  const w = c.why || {};
+  return `<article class="call ${L ? 'buy' : 'sell'}">
+    <div class="row"><span class="side">${L ? 'BUY' : 'SELL'}</span><span class="mkt">${esc(c.coin)}</span><span class="chip crypto">Sona zone</span>
+      <span style="margin-left:auto" class="row"><span class="px num ${pxCls(c.market)}" data-px="${c.market}">${fmt(now, dp)}</span>${px[c.market] ? '<span class="livetag"><i></i>LIVE</span>' : ''}${tvBtn(c.tv)}</span></div>
+    ${st}
+    <div class="ladder" style="--e:${pos(c.e1)}%">
+      <div class="bar"></div>
+      <span class="tick" style="left:${pos(c.sl)}%">SL</span>
+      <span class="tick b" style="left:${pos(c.e2)}%">E2</span>
+      <span class="tick" style="left:${pos(c.e1)}%">E1</span>
+      <span class="tick b" style="left:${pos(c.tp1)}%">TP1</span>
+      <span class="tick" style="left:${pos(c.tp2)}%">TP2</span>
+      <span class="now" style="left:${pos(now)}%"></span>
+    </div>
+    <div class="lv lv5 num">
+      <div><small>Entry 1</small><b>${fmt(c.e1, dp)}</b></div>
+      <div><small>Entry 2</small><b>${fmt(c.e2, dp)}</b></div>
+      <div class="sl"><small>SL · 30m close</small><b>${fmt(c.sl, dp)}</b></div>
+      <div class="tp"><small>TP1 · half</small><b>${fmt(c.tp1, dp)}</b></div>
+      <div class="tp"><small>TP2</small><b>${fmt(c.tp2, dp)}</b></div>
+    </div>
+    <div class="swhy">
+      <h4>Why this trade</h4>${esc(w.zoneLine || '')}
+      <h4>How the market reacted here · ${c.zone.touch} times</h4>
+      <div class="react">${(w.reactions || []).map(r => `<span>${day(r.t)}</span><span class="num">${fmt(r.px, dp)}</span><span class="${L ? 'up' : 'down'}">${L ? 'bounced +' : 'dropped −'}${r.move}% after</span>`).join('')}</div>
+      <h4>BTC</h4>${esc(w.btc || '')}
+      <h4>Her plan, step by step</h4><ul>${(w.plan || []).map(p => `<li>${esc(p)}</li>`).join('')}</ul>
+    </div>
+  </article>`;
+}
+function renderSona() {
+  const S = data.sona;
+  if (!S) { $('#sonaView').innerHTML = `<div class="empty" style="margin-top:14px"><b>Sona setups aren't published yet</b>They appear after the next cloud scan.</div>`; return; }
+  const live = S.calls.filter(c => SONA_LIVE.includes(c.status)).sort((a, b) => SONA_LIVE.indexOf(b.status) - SONA_LIVE.indexOf(a.status));
+  const closed = S.calls.filter(c => ['tp', 'be', 'sl'].includes(c.status)).sort((a, b) => b.closedAt - a.closedAt);
+  const tp1 = closed.filter(c => c.status !== 'sl').length, net = closed.reduce((s, c) => s + c.r, 0);
+  const bt = S.bt;
+  $('#sonaView').innerHTML = `
+    <div class="sona-intro"><b>Sona's strategy, run as rules.</b> Horizontal demand/supply zones on the 4H chart that price reacted to at least twice · two entries (top and bottom of the zone) · SL only on a 30-min candle close · half booked at +1R with the stop to entry · the rest to the next zone. Her ${S.coins.length} coins: ${esc(S.coins.join(', '))}. BTC leads: right now its daily close is in the <b>${S.regime > 0 ? 'top half' : S.regime < 0 ? 'bottom half' : '—'}</b> of its 20-day range, so <b>${S.regime > 0 ? 'only BUYs' : S.regime < 0 ? 'only SELLs' : 'nothing'}</b>.
+      <span class="warn">⚠️ Tested over ${esc(bt.period)} on ${bt.coins} coins: ${bt.trades} trades, ${bt.tp1}% reached TP1, but <b>${bt.avgR}R per trade overall — it loses slightly</b>. Her own posted calls did better (+${bt.her.avgR}R over ${bt.her.n} calls) because she picks which zones to trust. Watch these on paper; don't size up.</span></div>
+    <section class="stats" style="margin-top:14px">
+      <div class="stat"><small>Reached TP1</small><b class="num">${closed.length ? Math.round(tp1 / closed.length * 100) + '%' : '–'}</b><em>backtest ${bt.tp1}%</em></div>
+      <div class="stat"><small>Overall result</small><b class="num ${net >= 0 ? 'up' : 'down'}">${closed.length ? (net >= 0 ? '+' : '') + net.toFixed(1) + 'R' : '–'}</b><em>closed Sona trades</em></div>
+      <div class="stat"><small>Closed</small><b class="num">${closed.length}</b><em>${closed.filter(c => c.r > 0).length} won · ${closed.filter(c => c.r < 0).length} lost</em></div>
+      <div class="stat"><small>Live now</small><b class="num">${live.filter(c => c.status !== 'waiting').length}</b><em>${live.filter(c => c.status === 'waiting').length} waiting for entry</em></div>
+    </section>
+    <h2>Sona setups</h2>
+    ${live.length ? `<div class="calls">${live.map(sonaCard).join('')}</div>`
+      : `<div class="empty"><b>No Sona setup right now</b>A setup needs a zone price reacted to at least twice, close enough to price, on the side BTC allows. Checked every 5 minutes.</div>`}
+    <h2>Closed Sona trades · 90 days</h2>
+    ${closed.length ? `<div class="hist">${closed.map(c => `
+      <div class="h"><span class="res ${c.status}">${SONA_ST[c.status]}</span>
+        <span><b>${esc(c.coin)}</b> <span class="${c.side > 0 ? 'up' : 'down'}">${c.side > 0 ? 'BUY' : 'SELL'}</span> <small class="num">@ ${c.legs.map(x => fmt(x, c.dp)).join(' + ')}</small><br><small>${when(c.filledAt || c.createdAt)} · zone ${fmt(c.zone.lo, c.dp)}–${fmt(c.zone.hi, c.dp)} ×${c.zone.touch}</small></span>
+        <span class="num ${c.r > 0 ? 'up' : c.r < 0 ? 'down' : ''}" style="font-weight:700">${c.r > 0 ? '+' : ''}${c.r}R</span><span></span></div>`).join('')}</div>`
+      : `<div class="empty"><b>No closed Sona trades yet</b>Every setup is tracked to TP2, stop at entry, or SL, so this fills up with the real record.</div>`}`;
 }
 
 function renderFilters() {
