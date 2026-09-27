@@ -1,6 +1,13 @@
 #!/usr/bin/env node
-// A+ trade calls for gold, forex and crypto — and whether the money agrees.
+// Trade calls for gold and crypto — and whether the money agrees.
 //
+// Since 27 Sep 2026 calls come only from the daily setups in setups.js — the
+// only ones that held up over Jan 2022 → Sep 2026 with fees in (tools/lab/).
+// The 5m A+ rules below (aplus) still colour the market board and are kept
+// for the backtest tools, but no longer make calls: 247 live calls and 166k
+// replayed setups showed them a coin flip before fees.
+//
+// Original design notes for the 5m A+ version:
 // Runs after scan.js on the 5-minute GitHub Action and writes cloud/calls.json,
 // which is published on the state branch and read by docs/calls.html.
 //
@@ -30,11 +37,11 @@
 
 import fs from 'fs';
 import path from 'path';
+import { analyse, settle as settleDaily, dailyTrend, SETUPS, BACKTEST, RR as DRR } from './setups.js';
 
 const DIR = path.join(process.cwd(), 'cloud');
 const OUT = path.join(DIR, 'calls.json');
 const RR = 2.5;
-const EXPIRE_MS = 24 * 3600e3;
 const UA = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 Chrome/128 Safari/537.36';
 
 // ─── markets ───
@@ -99,8 +106,8 @@ async function get(url, { text = false, headers = {}, ms = 20000 } = {}) {
   }
 }
 
-const PER = { '5m': 300, '15m': 900, '1h': 3600 };
-const DUKA_TF = { '5m': '5MIN', '15m': '15MIN', '1h': '1HOUR' };
+const PER = { '5m': 300, '15m': 900, '1h': 3600, '4h': 14400 };
+const DUKA_TF = { '5m': '5MIN', '15m': '15MIN', '1h': '1HOUR', '4h': '4HOUR' };
 
 async function dukaBars(inst, tf, limit) {
   const url = 'https://freeserv.dukascopy.com/2.0/index.php?path=chart%2Fjson3&instrument=' + encodeURIComponent(inst) +
@@ -135,6 +142,13 @@ async function mexcBars(sym) {
   const d = (await mexcGet(`https://contract.mexc.com/api/v1/contract/kline/${sym}?interval=Min5&start=${Math.floor(Date.now() / 1000) - 1000 * 300}`)).data;
   if (!d?.time?.length) return [];
   return closed(d.time.map((t, i) => ({ t, o: +d.open[i], h: +d.high[i], l: +d.low[i], c: +d.close[i], v: +d.vol[i] })), '5m');
+}
+// 1000 closed 4H bars (~166 days) for the daily setups
+async function bars4h(m) {
+  if (m.src === 'duka') return dukaBars(m.inst, '4h', 1000);
+  const d = (await mexcGet(`https://contract.mexc.com/api/v1/contract/kline/${m.msym}?interval=Hour4&start=${Math.floor(Date.now() / 1000) - 1000 * 14400}`)).data;
+  if (!d?.time?.length) return [];
+  return closed(d.time.map((t, i) => ({ t, o: +d.open[i], h: +d.high[i], l: +d.low[i], c: +d.close[i], v: +d.vol[i] })), '4h');
 }
 function rollup(m5, sec) {
   const out = [];
@@ -391,55 +405,12 @@ export function verdict(side, checks) {
   return { agree, oppose, call };
 }
 
-// ─── outcome tracking ───
-// Walks the bars since entry. Besides TP / SL it records what the trade went
-// through — best excursion (mfe, in R), bars to exit, and whether moving the
-// stop to breakeven at +1R would have changed the result — which is what the
-// lessons are learned from. If a breakeven lesson was active when the call
-// opened (call.mgmt.be), the stop really does move to entry at +1R.
-function settle(call, m5) {
-  const risk = Math.abs(call.entry - call.sl), d = call.side;
-  const after = m5.filter(b => b.t > call.barT);
-  let mfe = 0, mae = 0, at1R = false, beTouch = false, bars = 0;
-  const out = (status, r, t) => ({ status, r: Math.round(r * 100) / 100, closedAt: t, mfe: +mfe.toFixed(2), mae: +mae.toFixed(2), bars, beTouch });
-  for (const b of after) {
-    bars++;
-    const best = ((d > 0 ? b.h : b.l) - call.entry) * d / risk, worst = ((d > 0 ? b.l : b.h) - call.entry) * d / risk;
-    const stop = call.mgmt?.be && at1R ? call.entry : call.sl;
-    const hitSl = d > 0 ? b.l <= stop : b.h >= stop;
-    const hitTp = d > 0 ? b.h >= call.tp : b.l <= call.tp;
-    if (at1R && worst <= 0) beTouch = true;
-    mae = Math.min(mae, Math.max(worst, -1));
-    if (hitSl) { mfe = Math.max(mfe, Math.min(best, RR)); return out(stop === call.entry ? 'be' : 'sl', stop === call.entry ? 0 : -1, b.t * 1000); }
-    mfe = Math.max(mfe, Math.min(best, RR));
-    if (hitTp) return out('tp', RR, b.t * 1000);
-    if (mfe >= 1) at1R = true;
-  }
-  call.mfe = +mfe.toFixed(2);                                    // live excursion for open calls
-  if (Date.now() - call.openedAt > EXPIRE_MS && after.length)
-    return out('expired', (after.at(-1).c - call.entry) * d / risk, Date.now());
-  return null;
-}
-
-// ─── learning from losses ───
+// ─── learning from losses (5m A+ era — kept for the tools, main() no longer uses it) ───
 // Every closed call goes into a permanent ledger with what it looked like at
 // entry. A condition becomes a lesson only with evidence: at least 8 calls,
 // a losing average after shrinking toward zero (sum R / (n + 5)), and clearly
 // worse than calls without it. Active lessons turn matching new calls into
 // SKIP and say why; they switch themselves off again if the numbers recover.
-const SESS = h => h < 7 ? 'Asia' : h < 12 ? 'London' : h < 17 ? 'New York' : 'Late US';
-function features(m, z, checks, v) {
-  const f = {
-    market: m.id, class: m.cls, side: z.side > 0 ? 'buy' : 'sell',
-    session: SESS(new Date().getUTCHours()),
-    volatility: z.volRatio < 0.9 ? 'quiet' : z.volRatio > 1.6 ? 'wild' : 'normal',
-    stop: Math.abs(z.entry - z.sl) / z.atr > 1.6 ? 'wide' : 'tight',
-    verdict: v.call
-  };
-  for (const c of checks) if (c.key !== 'news' && c.key !== 'liq') f[c.key] = c.lean === z.side ? 'agrees' : c.lean === -z.side ? 'opposes' : 'neutral';
-  if (checks.some(c => c.warn)) f.news = 'high-impact soon';
-  return f;
-}
 const LABEL = { market: 'Market', class: 'Class', side: 'Direction', session: 'Session', volatility: 'Volatility', stop: 'Stop size', verdict: 'Sentiment verdict',
   funds: 'Big funds (COT)', crowd: 'Crowd', etf: 'Gold ETF money', dollar: 'US dollar', yields: 'US yields', taker: 'Taker flow', funding: 'Funding', oi: 'Open interest', news: 'News' };
 const describe = (k, val) => ['funds', 'crowd', 'etf', 'dollar', 'yields', 'taker', 'funding', 'oi'].includes(k) ? `${LABEL[k]} ${val}` : `${LABEL[k] || k}: ${val}`;
@@ -480,23 +451,6 @@ function learn(ledger) {
   } : null;
   return { lessons: lessons.sort((a, b) => b.active - a.active || a.avg - b.avg), post, trained: closed.length };
 }
-// Lessons from replaying these exact rules over 4,658 trades (1–26 Sep 2026,
-// tools/calls-backtest.mjs + calls-learn.mjs, fees included). Only conditions
-// that were worse in BOTH the older and the newer half are here — each one
-// knocks the verdict down a step. Numbers are avg R per trade (older|newer),
-// against +0.06|-0.24 for all crypto calls.
-const BACKTEST = { from: '2026-09-01', to: '2026-09-26', trades: 4658, avgR: -0.09, winPct: 26, recentAvgR: -0.24,
-  note: 'Every day since 19 Sep lost money — no filter made the recent week positive.' };
-const BT_LESSONS = [
-  { id: 'bt-ny', test: (m, z, hr) => m.cls === 'crypto' && hr >= 12 && hr < 17, text: 'New York session: −0.05|−0.30R per trade in the replay' },
-  { id: 'bt-quiet', test: (m, z) => m.cls === 'crypto' && z.volRatio < 1.04, text: 'Quiet market (ATR below normal): −0.07|−0.23R per trade in the replay' },
-  { id: 'bt-liquid', test: m => m.cls === 'crypto' && m.liqRank != null && m.liqRank < 100, text: 'Top-100 volume coin: −0.15|−0.31R per trade in the replay' }
-];
-const STEP = { 'TAKE': 'HALF SIZE', 'HALF SIZE': 'SKIP', 'SKIP': 'SKIP', 'WAIT FOR NEWS': 'WAIT FOR NEWS' };
-
-function lessonsFor(feat, learned) {
-  return (learned?.lessons || []).filter(l => l.active && l.kind === 'filter' && feat[l.key] === l.val);
-}
 function lossWhy(t) {
   const why = [];
   if (t.mfe != null) {
@@ -512,9 +466,6 @@ function lossWhy(t) {
   return why;
 }
 
-// gold, forex and the 50 most-traded coins ping Telegram; the rest stay on the page
-let topCoins = new Set();
-const alertable = m => m.cls !== 'crypto' || topCoins.has(m.id);
 
 // Telegram + the ntfy phone app (same topic the MT5 A+ watcher used)
 async function telegram(text) {
@@ -541,9 +492,13 @@ async function telegram(text) {
 // ─── run ───
 async function main() {
   const prev = (() => { try { return JSON.parse(fs.readFileSync(OUT, 'utf8')); } catch { return { calls: [] }; } })();
-  const calls = prev.calls || [];
-  const ledger = prev.ledger || [];
-  const learned = learn(ledger);
+  // the 5m A+ calls were retired on 27 Sep 2026: keep their record as one line, start the daily ledger clean
+  const retired = prev.retired || (() => {
+    const l = (prev.ledger || []).filter(t => !t.setup);
+    return { until: '2026-09-27', n: l.length, wins: l.filter(t => t.r > 0).length, net: +l.reduce((s, t) => s + t.r, 0).toFixed(1) };
+  })();
+  const calls = (prev.calls || []).filter(c => c.setup);
+  const ledger = (prev.ledger || []).filter(t => t.setup);
   const errors = [];
   const soft = (name, p) => p.catch(e => { errors.push(`${name}: ${e.message}`); return null; });
 
@@ -555,7 +510,6 @@ async function main() {
   const all = [...MARKETS, ...(coins || [])];
   const byTurnover = (coins || []).slice().sort((a, b) => b.turnover - a.turnover);
   byTurnover.forEach((c, k) => { c.liqRank = k; });
-  topCoins = new Set(byTurnover.slice(0, 50).map(c => c.id));
   const ctx = { cot: cotData, gld, dxy, bonds: bnd, cal, flow: {} };
 
   // pass 1: candles + the A+ zone for everything
@@ -573,10 +527,26 @@ async function main() {
     }
   })).filter(Boolean);
 
-  // pass 2: positioning only where it matters — majors, lined-up coins, open calls
   if (dropped > 20) errors.push(`${dropped} coins had no candles this scan`);
-  const wanted = scanned.filter(({ m, z }) => m.cls === 'crypto' &&
-    (m.major || z.status !== 'none' || calls.some(c => c.market === m.id && c.status === 'active')));
+
+  // pass D: 4H bars + the daily setups for gold and the 50 busiest coins (the
+  // tested list), plus any market with an open call
+  const dailyIds = new Set(['XAUUSD', ...byTurnover.slice(0, 50).map(c => c.id), 'BTCUSDT',
+    ...calls.filter(c => c.status === 'active').map(c => c.market)]);
+  const daily = {};
+  const btcM = all.find(m => m.id === 'BTCUSDT');
+  const btc4 = btcM ? await soft('BTC 4h', bars4h(btcM)) : null;
+  const btcUp = btc4?.length > 400 ? dailyTrend(btc4) === 1 : false;
+  await pool(all.filter(m => dailyIds.has(m.id)), 6, async m => {
+    try {
+      const b4 = m.id === 'BTCUSDT' && btc4 ? btc4 : await bars4h(m);
+      if (b4.length > 400) daily[m.id] = { b4, z: analyse(m.cls, b4, btcUp) };
+    } catch (e) { if (m.cls !== 'crypto' || m.major) errors.push(`${m.id} 4h: ${e.message}`); }
+  });
+
+  // pass 2: positioning only where it matters — majors, daily setups in play, open calls
+  const wanted = scanned.filter(({ m }) => m.cls === 'crypto' &&
+    (m.major || (daily[m.id] && daily[m.id].z.status !== 'none') || calls.some(c => c.market === m.id && c.status === 'active')));
   await pool(wanted, 6, async ({ m }) => { ctx.flow[m.id] = await cryptoFlow(m.contract).catch(() => null); });
 
   const markets = [];
@@ -585,43 +555,38 @@ async function main() {
     const checks = deep ? checksFor(m, ctx) : [];
     const leanSum = checks.reduce((s, c) => s + c.lean, 0);
 
+    const D = daily[m.id];
     // settle open calls on this market
     for (const c of calls.filter(c => c.market === m.id && c.status === 'active')) {
-      const done = settle(c, bars.m5);
+      const done = D ? settleDaily(c, D.b4) : null;
       if (done) {
         Object.assign(c, done);
-        if (c.r < 0) c.why = lossWhy(c);
-        ledger.push({ id: c.id, market: c.market, cls: c.cls, side: c.side, feat: c.feat, r: c.r, status: c.status,
-          mfe: c.mfe, mae: c.mae, bars: c.bars, beTouch: c.beTouch, openedAt: c.openedAt, closedAt: c.closedAt, why: c.why });
-        if (alertable(m)) await telegram(`${done.status === 'tp' ? '✅' : done.status === 'sl' ? '❌' : '⏱'} <b>${m.name || m.id} ${c.side > 0 ? 'BUY' : 'SELL'}</b> closed: ${done.status.toUpperCase()} (${done.r > 0 ? '+' : ''}${done.r}R)`);
+        ledger.push({ id: c.id, market: c.market, cls: c.cls, side: c.side, setup: c.setup, verdict: c.verdict?.call, r: c.r, status: c.status,
+          mfe: c.mfe, bars: c.bars, openedAt: c.openedAt, closedAt: c.closedAt });
+        if (c.verdict?.call === 'TAKE')
+          await telegram(`${done.r > 0 ? '✅' : done.r === 0 ? '➖' : '❌'} <b>${m.name || m.id} BUY</b> (${SETUPS[c.setup].name}) closed: ${done.status.toUpperCase()} (${done.r > 0 ? '+' : ''}${done.r}R)`);
       }
     }
 
-    // new call
-    if (z.status === 'ready' && !calls.some(c => c.market === m.id && c.status === 'active') &&
-        !calls.some(c => c.market === m.id && c.barT === z.barT)) {
-      const v = verdict(z.side, checks);
-      const feat = features(m, z, checks, v);
-      const hits = lessonsFor(feat, learned);
-      if (hits.length) v.call = 'SKIP';
-      const bt = BT_LESSONS.filter(l => l.test(m, z, new Date().getUTCHours()));
-      for (const _ of bt) v.call = STEP[v.call];
-      hits.push(...bt.map(l => ({ text: l.text })));
-      const be = learned.lessons.some(l => l.id === 'manage=be' && l.active);
+    // new call: only right after the 4H bar that triggered it closed, one per market per setup
+    const z4 = D?.z;
+    if (z4?.status === 'ready' && Date.now() / 1000 - (z4.barT + 14400) < (+process.env.CALLS_FRESH_H || 3) * 3600 &&
+        !calls.some(c => c.market === m.id && c.status === 'active' && c.setup === z4.setup) &&
+        !calls.some(c => c.id === `${m.id}-${z4.setup}-${z4.barT}`) && z.price > z4.sl && (z4.tp == null || z.price < z4.tp)) {
+      const S = SETUPS[z4.setup], v = verdict(1, checks);
+      v.call = S.verdict; v.hot = S.hot;
       const call = {
-        feat, lessons: hits.map(l => l.text), mgmt: { be },
-        id: `${m.id}-${z.barT}`, market: m.id, name: m.name || m.id, cls: m.cls, dp: m.dp, tv: m.tv, side: z.side, grade: 'A+',
-        entry: z.entry, sl: z.sl, tp: z.tp, rr: RR, zone: z.zone, barT: z.barT, openedAt: Date.now(),
-        status: 'active', checks, verdict: v
+        id: `${m.id}-${z4.setup}-${z4.barT}`, setup: z4.setup, market: m.id, name: m.name || m.id, cls: m.cls, dp: m.dp, tv: m.tv, side: 1,
+        entry: z4.entry, sl: z4.sl, tp: z4.tp, rr: z4.tp != null ? DRR : null, exit: S.exit, maxBars: z4.maxBars, trigger: z4.trigger,
+        barT: z4.barT, openedAt: Date.now(), status: 'active', checks, verdict: v, bt: S.bt
       };
       calls.push(call);
       const f = x => x.toFixed(m.dp);
-      if (alertable(m))
-        await telegram(`🎯 <b>${call.name} ${z.side > 0 ? 'BUY' : 'SELL'} A+</b>\nEntry ${f(z.entry)}  SL ${f(z.sl)}  TP ${f(z.tp)} (1:${RR})\n` +
-          `Sentiment: ${v.agree} agree / ${v.oppose} oppose → <b>${v.call}</b>\n` +
-          (hits.length ? `📚 Lesson: ${hits.map(l => l.text).join('; ')}\n` : '') + (be ? 'Move stop to entry at +1R (lesson)\n' : '') +
-          checks.filter(c => c.lean).map(c => `${c.lean === z.side ? '✅' : '⚠️'} ${c.label}`).join('\n') +
-          `\nhttps://www.tradingview.com/chart/?symbol=${encodeURIComponent(m.tv)}&interval=5`);
+      if (S.verdict === 'TAKE')
+        await telegram(`🎯 <b>${call.name} BUY — ${S.name}</b>${S.hot ? ' 🔥' : ''}\n` +
+          `Entry ${f(call.entry)}  SL ${f(call.sl)}  ` + (call.tp != null ? `TP ${f(call.tp)} (1:${DRR})` : 'Trail: stop to entry at +1R, out on a 4H close under EMA20') + '\n' +
+          `Backtest 2022–26: ${S.bt.n} trades, ${S.bt.win}% won, ${S.bt.avg >= 0 ? '+' : ''}${S.bt.avg}R per trade\n` +
+          `https://www.tradingview.com/chart/?symbol=${encodeURIComponent(m.tv)}&interval=240`);
     }
 
     const live = calls.find(c => c.market === m.id && c.status === 'active');
@@ -640,21 +605,25 @@ async function main() {
       turnover: m.turnover ? Math.round(m.turnover) : undefined,
       chg24: bars.h1.length > 24 ? +(z.price / bars.h1.at(-25).c - 1).toFixed(5) : 0,
       spark: bars.h1.slice(-48).filter((_, j, a) => deep || j % 2 === 0 || j === a.length - 1).map(b => sig(b.c)),
-      trend: z.trend, status: z.status, side: z.side, zone: z.zone && z.zone.map(sig), blockers: z.blockers || [],
+      trend: { d1: D?.z.trend ?? 0, ...z.trend },
+      status: D ? D.z.status : 'none', side: D ? D.z.side : 0,
+      zone: D && D.z.side && D.z.trigger ? [sig(D.z.trigger), sig(D.z.trigger + D.z.atrD)] : null,
+      blockers: D ? D.z.blockers : [dailyIds.has(m.id) ? 'no 4H data this scan' : m.cls === 'forex' ? 'Forex: no setup held up in testing — no calls' : 'Only gold and the 50 busiest coins get calls (the tested list)'],
       open: z.fresh, checks, deep, vol, lean: Math.sign(leanSum), leanScore: leanSum
     });
   }
 
-  // keep 30 days of history
-  const keep = calls.filter(c => c.status === 'active' || Date.now() - (c.closedAt || c.openedAt) < 30 * 864e5);
-  const doc = { updatedAt: Date.now(), rr: RR, markets, calls: keep, errors, cotDate: Object.values(cotData || {})[0]?.date || null,
-    ledger: ledger.slice(-3000), learned: { ...learn(ledger), backtest: BACKTEST, btLessons: BT_LESSONS.map(l => l.text) } };
+  // keep 90 days of history (daily calls run for up to 30 days)
+  const keep = calls.filter(c => c.status === 'active' || Date.now() - (c.closedAt || c.openedAt) < 90 * 864e5);
+  const doc = { updatedAt: Date.now(), rr: DRR, markets, calls: keep, errors, cotDate: Object.values(cotData || {})[0]?.date || null,
+    btcUp, retired, ledger: ledger.slice(-3000), learned: { backtest: BACKTEST, setups: SETUPS } };
   fs.mkdirSync(DIR, { recursive: true });
   fs.writeFileSync(OUT, JSON.stringify(doc));
   console.log(`calls: ${markets.length}/${all.length} markets, ${Object.values(ctx.flow).filter(Boolean).length} with crypto positioning, ${keep.filter(c => c.status === 'active').length} active, ${keep.length} kept` +
     (errors.length ? `\n  errors: ${errors.join(' | ')}` : ''));
-  for (const mk of markets.filter(x => x.cls !== 'crypto' || x.major || x.status === 'ready' || x.status === 'watching'))
-    console.log(`  ${mk.id.padEnd(8)} ${String(mk.price).padEnd(10)} ${mk.status.padEnd(9)} H1 ${mk.trend.h1} M15 ${mk.trend.m15} M5 ${mk.trend.m5}  lean ${mk.leanScore}  ${mk.blockers[0] || ''}`);
+  for (const mk of markets.filter(x => x.cls === 'gold' || x.major || x.status === 'ready' || x.status === 'watching'))
+    console.log(`  ${mk.id.padEnd(8)} ${String(mk.price).padEnd(10)} ${mk.status.padEnd(9)} D1 ${mk.trend.d1} H1 ${mk.trend.h1}  lean ${mk.leanScore}  ${mk.blockers[0] || ''}`);
+  console.log(`  BTC daily uptrend: ${btcUp} · ${Object.keys(daily).length} markets on the daily setups`);
 }
 
 export { learn, lossWhy, aplus, rollup, mexcGet, dukaBars, cryptoUniverse, MARKETS as FIXED, ema, atrAt, trend };
