@@ -1,0 +1,40 @@
+# Gold + silver A+ phone alerts (tools/live/aplus-cloud.mjs), so they keep
+# coming when the laptop is off. Same pattern as calls.yml: one run stays up
+# ~5h30m checking every 20 s, then re-dispatches itself. The cron only restarts
+# the chain if it ever breaks.
+name: aplus
+
+on:
+  schedule:
+    - cron: '41 */4 * * *'
+  workflow_dispatch:
+
+concurrency:
+  group: aplus
+  cancel-in-progress: false
+
+jobs:
+  loop:
+    runs-on: ubuntu-latest
+    timeout-minutes: 350
+    permissions:
+      contents: read
+      actions: write         # re-dispatches this workflow
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Scan gold + silver
+        env:
+          NTFY_TOPIC: ${{ secrets.NTFY_TOPIC }}
+          RUN_MIN: '330'
+        run: node tools/live/aplus-cloud.mjs
+
+      - name: Hand over to the next run
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh workflow run aplus.yml --repo ${{ github.repository }}
