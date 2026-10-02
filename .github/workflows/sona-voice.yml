@@ -1,0 +1,59 @@
+# Transcribe one of Sona's (@sonaabeyg) voice notes for copysona.
+# The VPS is too slow for whisper (a 2-min note took >15 min), so copysona
+# dispatches this with the post id, then reads the transcript from the job log
+# (line starting SONA_VOICE_B64:). Model: faster-whisper large-v3-turbo, int8 CPU.
+name: sona-voice
+run-name: sona-voice ${{ inputs.post }}
+on:
+  workflow_dispatch:
+    inputs:
+      post:
+        description: channel post id
+        required: true
+jobs:
+  transcribe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cache/huggingface
+            ~/.cache/pip
+          key: fw-turbo-v1
+      - run: pip install -q faster-whisper==1.1.1
+      - name: transcribe
+        env:
+          POST: ${{ inputs.post }}
+        run: |
+          python - <<'EOF'
+          import base64, json, os, time, urllib.request
+          post = os.environ['POST']
+          url = f'https://tg.i-c-a.su/media/sonaabeyg/{post}'
+          audio = None
+          for i in range(30):
+              try:
+                  r = urllib.request.urlopen(urllib.request.Request(url, headers={'user-agent': 'Mozilla/5.0'}), timeout=60)
+                  body = r.read()
+                  if 'json' not in (r.headers.get('content-type') or ''):
+                      audio = body; break
+                  print('mirror:', body[:120])
+              except Exception as e:
+                  print('mirror error:', e)
+              time.sleep(10)
+          if not audio:
+              raise SystemExit('could not download the voice note')
+          open('v.ogg', 'wb').write(audio)
+          from faster_whisper import WhisperModel
+          t = time.time()
+          m = WhisperModel('deepdml/faster-whisper-large-v3-turbo-ct2', device='cpu', compute_type='int8', cpu_threads=4)
+          segs, info = m.transcribe('v.ogg', beam_size=1, vad_filter=True,
+              initial_prompt='Crypto futures trade. Urdu and English. Coins like BTC, ETH, SOL, XRP, LTC, TAO, SUI, AAVE, LINK, DOGE, ADA. Entry, DCA, SL, liq zero, book, half, long, short.')
+          text = ' '.join(s.text.strip() for s in segs)
+          print(f'lang {info.language} {info.language_probability:.2f}, audio {info.duration:.0f}s, took {time.time() - t:.0f}s')
+          print(text)
+          print('SONA_VOICE_B64:' + base64.b64encode(json.dumps({'post': post, 'lang': info.language, 'text': text}).encode()).decode())
+          EOF
