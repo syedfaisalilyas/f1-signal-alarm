@@ -24,7 +24,7 @@ jobs:
             ~/.cache/huggingface
             ~/.cache/pip
           key: fw-turbo-v1
-      - run: pip install -q faster-whisper==1.1.1
+      - run: pip install -q faster-whisper==1.1.1 requests
       - name: transcribe
         env:
           POST: ${{ inputs.post }}
