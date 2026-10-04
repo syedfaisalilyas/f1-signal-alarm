@@ -1,0 +1,69 @@
+# Standby for the close2sonastrat LIVE bot (user, 4 Oct 2026).
+# The bot keeps no stop order on MEXC — its −10% stop and its trail are market
+# orders sent by the VPS. While the VPS is silent (C2S_HEARTBEAT older than
+# 10 minutes) this job does those two exits from here, with the same rules, on
+# the trades in the bot's last published book (C2S_BOOK). It never opens or
+# adds. See tools/sona/standby.mjs.
+#
+# A run cannot read the variables after it starts, so runs are short (~4.5 min)
+# and chained: every run hands over to the next, which gets fresh values. The
+# cron only restarts the chain if it ever breaks. Without the two MEXC secrets
+# the job does nothing and does not chain.
+name: c2s-standby
+run-name: c2s-standby (${{ inputs.was || 'start' }})
+on:
+  schedule:
+    - cron: '7,22,37,52 * * * *'
+  workflow_dispatch:
+    inputs:
+      was:
+        description: what the previous run was (idle | standby)
+        default: idle
+      force:
+        description: treat the heartbeat as stale
+        type: boolean
+        default: false
+      dry:
+        description: no orders, no takeover message
+        type: boolean
+        default: false
+      once:
+        description: do not hand over to a next run
+        type: boolean
+        default: false
+concurrency:
+  group: c2s-standby
+  cancel-in-progress: false
+jobs:
+  standby:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      actions: write         # re-dispatches this workflow
+    steps:
+      - uses: actions/checkout@v4
+      - name: Watch
+        id: run
+        env:
+          BEAT: ${{ vars.C2S_HEARTBEAT }}
+          BOOK: ${{ vars.C2S_BOOK }}
+          WAS: ${{ inputs.was || 'idle' }}
+          FORCE: ${{ inputs.force }}
+          DRY: ${{ inputs.dry }}
+          MEXC_KEY: ${{ secrets.MEXC_C2S_KEY }}
+          MEXC_SECRET: ${{ secrets.MEXC_C2S_SECRET }}
+          TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          NTFY_TOPIC: ${{ secrets.NTFY_TOPIC }}
+        run: |
+          if [ -z "$MEXC_KEY" ] || [ -z "$MEXC_SECRET" ]; then echo "no MEXC key stored — the standby is off"; echo "mode=off" >> "$GITHUB_OUTPUT"; exit 0; fi
+          umask 077
+          printf 'MEXC_KEY=%s\nMEXC_SECRET=%s\n' "$MEXC_KEY" "$MEXC_SECRET" > "$RUNNER_TEMP/mexc.env"
+          MEXC_ENV_FILE="$RUNNER_TEMP/mexc.env" node tools/sona/standby.mjs
+          rm -f "$RUNNER_TEMP/mexc.env"
+      - name: Hand over to the next run
+        if: always() && steps.run.outputs.mode != 'off' && inputs.once != true
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh workflow run c2s-standby.yml --repo ${{ github.repository }} -f was=${{ steps.run.outputs.mode || 'idle' }}
