@@ -1,0 +1,21 @@
+# Temporary: what can a runner reach for the close2sonastrat standby?
+name: c2s-probe
+on:
+  workflow_dispatch:
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    permissions:
+      actions: write
+      contents: read
+    steps:
+      - env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          echo "var via api: $(curl -s -o /dev/null -w '%{http_code}' -H "Authorization: Bearer $GH_TOKEN" https://api.github.com/repos/${{ github.repository }}/actions/variables/C2S_HEARTBEAT)"
+          echo "mexc ping:   $(curl -s -o /dev/null -w '%{http_code}' -m 15 https://contract.mexc.com/api/v1/contract/ping)"
+          echo "mexc ticker: $(curl -s -m 15 'https://contract.mexc.com/api/v1/contract/ticker?symbol=TAO_USDT' | head -c 90)"
+          echo "mexc kline:  $(curl -s -m 15 "https://contract.mexc.com/api/v1/contract/kline/TAO_USDT?interval=Min1&start=$(( $(date +%s) - 300 ))" | head -c 200)"
+          echo "mexc private (unsigned): $(curl -s -m 15 https://contract.mexc.com/api/v1/private/position/open_positions | head -c 120)"
+          echo "binance: $(curl -s -o /dev/null -w '%{http_code}' -m 15 https://fapi.binance.com/fapi/v1/ping)"
