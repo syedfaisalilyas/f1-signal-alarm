@@ -1,0 +1,50 @@
+# Outside watchdog for the close2sonastrat LIVE bot (user, 4 Oct 2026).
+# The bot has no stop order on MEXC — its −10% stop is a market order sent by
+# the VPS — and its Telegram messages come from that same VPS, so a dead server
+# is silent. The bot writes the time into the repo variable C2S_HEARTBEAT every
+# 4 minutes (tools/sona/widfix.mjs beat(), only after a loop that ran without
+# an error). This job reads it every 5 minutes and, when it is older than
+# 15 minutes, messages Telegram and ntfy: every run for the first 75 minutes,
+# then about once an hour. Set the variable to anything non-numeric to pause.
+name: c2s-watchdog
+on:
+  schedule:
+    - cron: '*/5 * * * *'
+  workflow_dispatch:
+    inputs:
+      test:
+        description: send a TEST alert whatever the heartbeat says
+        type: boolean
+        default: false
+concurrency:
+  group: c2s-watchdog
+  cancel-in-progress: false
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - name: check heartbeat
+        env:
+          BEAT: ${{ vars.C2S_HEARTBEAT }}
+          TEST: ${{ inputs.test }}
+          TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          NTFY_TOPIC: ${{ secrets.NTFY_TOPIC }}
+        run: |
+          case "$BEAT" in ''|*[!0-9]*) echo "heartbeat is '$BEAT' — paused, nothing to check"; [ "$TEST" = true ] || exit 0; BEAT=0;; esac
+          age=$(( ( $(date +%s) - BEAT / 1000 ) / 60 ))
+          echo "heartbeat age: $age min"
+          if [ "$TEST" = true ]; then
+            msg="🧪 TEST — close2sonastrat watchdog works. This is what you get if the bot goes silent. Bot heartbeat right now: $age min old."
+          elif [ "$age" -le 15 ]; then
+            echo ok; exit 0
+          elif [ "$age" -lt 75 ] || [ $(( age % 60 )) -lt 6 ]; then
+            msg="🚨 close2sonastrat is NOT RESPONDING — no heartbeat from the server for $age minutes. Open trades have NO stop while it is down. Check the trades in the MEXC app now."
+          else
+            echo "still down ($age min) — next reminder on the hour"; exit 0
+          fi
+          curl -sS -m 20 -o /dev/null -w "telegram %{http_code}\n" "https://api.telegram.org/bot${TELEGRAM_TOKEN}/sendMessage" \
+            --data-urlencode "chat_id=${TELEGRAM_CHAT_ID}" --data-urlencode "text=${msg}" || true
+          [ -z "$NTFY_TOPIC" ] || curl -sS -m 20 -o /dev/null -w "ntfy %{http_code}\n" -H "Priority: urgent" -H "Title: close2sonastrat watchdog" \
+            -d "$msg" "https://ntfy.sh/${NTFY_TOPIC}" || true
