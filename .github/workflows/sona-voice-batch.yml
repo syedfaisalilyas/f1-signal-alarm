@@ -1,0 +1,105 @@
+# Transcribe the whole year of Sona's (@sonaabeyg) voice notes, to read her own
+# reasons for each trade. Post ids come from tools/sona/lab/voice-ids.txt, split
+# over the shards; each shard uploads its transcripts as an artifact (voice-N).
+# Same model as sona-voice.yml (faster-whisper large-v3-turbo, int8 CPU).
+name: sona-voice-batch
+run-name: sona-voice-batch ${{ inputs.shards }} shards
+on:
+  workflow_dispatch:
+    inputs:
+      shards:
+        description: number of parallel shards (1-20)
+        default: '20'
+      limit:
+        description: notes per shard (0 = all)
+        default: '0'
+jobs:
+  plan:
+    runs-on: ubuntu-latest
+    outputs:
+      list: ${{ steps.p.outputs.list }}
+    steps:
+      - id: p
+        env:
+          SHARDS: ${{ inputs.shards }}
+        run: |
+          n=$(( SHARDS > 20 ? 20 : (SHARDS < 1 ? 1 : SHARDS) ))
+          echo "list=[$(seq -s, 0 $((n-1)))]" >> "$GITHUB_OUTPUT"
+  transcribe:
+    needs: plan
+    runs-on: ubuntu-latest
+    timeout-minutes: 350
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: ${{ fromJSON(needs.plan.outputs.list) }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          sparse-checkout: tools/sona/lab/voice-ids.txt
+          sparse-checkout-cone-mode: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cache/huggingface
+            ~/.cache/pip
+          key: fw-turbo-v1
+      - run: pip install -q faster-whisper==1.1.1 requests
+      - name: transcribe
+        env:
+          SHARD: ${{ matrix.shard }}
+          SHARDS: ${{ inputs.shards }}
+          LIMIT: ${{ inputs.limit }}
+        run: |
+          python - <<'EOF'
+          import json, os, re, time, urllib.request
+          shard, shards, limit = int(os.environ['SHARD']), max(1, min(20, int(os.environ['SHARDS']))), int(os.environ['LIMIT'] or 0)
+          ids = [l.strip() for l in open('tools/sona/lab/voice-ids.txt') if l.strip()]
+          ids = [p for i, p in enumerate(ids) if i % shards == shard]
+          if limit: ids = ids[:limit]
+          t0 = time.time(); BUDGET = 320 * 60
+          def fetch(post):
+              url = f'https://tg.i-c-a.su/media/sonaabeyg/{post}'
+              for i in range(40):
+                  if time.time() - t0 > BUDGET: return None, 'out of time'
+                  try:
+                      r = urllib.request.urlopen(urllib.request.Request(url, headers={'user-agent': 'Mozilla/5.0'}), timeout=120)
+                      body, ct = r.read(), r.headers.get('content-type') or ''
+                      if 'json' not in ct: return body, ct
+                      msg = body[:160].decode('utf8', 'ignore')
+                  except Exception as e:
+                      msg = str(e)
+                  w = re.search(r'FLOOD_WAIT_(\d+)', msg)
+                  time.sleep(int(w.group(1)) + 2 if w else 10)
+              return None, msg
+          from faster_whisper import WhisperModel
+          m = WhisperModel('deepdml/faster-whisper-large-v3-turbo-ct2', device='cpu', compute_type='int8', cpu_threads=4)
+          os.makedirs('out', exist_ok=True)
+          out = open(f'out/voice-{shard}.jsonl', 'w'); done = 0
+          for post in ids:
+              if time.time() - t0 > BUDGET: print('out of time at', post); break
+              rec = {'post': int(post)}
+              body, ct = fetch(post)
+              if body is None: rec['error'] = ct
+              elif not re.search(r'audio|video|ogg|octet', ct) or len(body) > 60e6: rec['skip'] = f'{ct} {len(body)}'
+              else:
+                  try:
+                      open('v.bin', 'wb').write(body)
+                      segs, info = m.transcribe('v.bin', beam_size=1, vad_filter=True,
+                          initial_prompt='Crypto futures trade. Urdu and English. Coins like BTC, ETH, SOL, XRP, LTC, TAO, SUI, AAVE, LINK, DOGE, ADA. Entry, DCA, SL, liq zero, book, half, long, short.')
+                      rec.update(text=' '.join(s.text.strip() for s in segs), lang=info.language, dur=round(info.duration), ct=ct)
+                  except Exception as e:
+                      rec['error'] = f'transcribe: {e}'[:200]
+              out.write(json.dumps(rec, ensure_ascii=False) + '\n'); out.flush(); done += 1
+              if done % 10 == 0: print(done, 'of', len(ids), f'{(time.time() - t0) / 60:.0f} min')
+          print('done', done, 'of', len(ids))
+          EOF
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: voice-${{ matrix.shard }}
+          path: out/
+          retention-days: 30
